@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ua">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Модуль множного вибору файлів форми</title>
+    <link rel="stylesheet" href="drag.and.drop.file.input.css">
+</head>
+
+<body>
+    <h2>Input множинний вибір</h2>
+    <div class="file-drop-area">
+        <span class="fake-btn">Оберіть файл</span>
+        <span class="file-msg">або перетягніть його в дану ділянку</span>
+        <input class="file-input" type="file" name="image[]" id="image" multiple>
+    </div>
+    <div class="previewWindow d-flex flex-row" id="preview"></div>
+    <button class='remove fake-btn btn-clear-all' onclick="clearInputFile_()">Видалити все</button>
+    <footer>
+        <a target="_blank" href="https://fsws.ru">Five stars web company</a> - by Mikhail Khravtsov
+    </footer>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.0/jquery.min.js"></script>
+    <script src="drag.and.drop.file.input.js"></script>
+</body>
+
+</html>
