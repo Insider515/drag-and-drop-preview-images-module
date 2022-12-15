@@ -9,4 +9,4 @@
 4. Можливiсть завантаження группи файлiв
 5. Вiдправка файлiв разом з формою
 
-![FSWS_FTP_Grabber](https://github.com/Insider515/FSWS_FTP_Grabber/blob/master/preview/previewImage.png?raw=true)
+![FSWS_FTP_Grabber](https://github.com/Insider515/drag-and-drop-preview-images-module/blob/master/preview/previewImage.png?raw=true)
