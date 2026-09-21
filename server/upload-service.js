@@ -256,7 +256,6 @@ export class UploadService {
       size: outcome.size,
       sha256: outcome.sha256,
     });
-    if (sent?.detail) this.warn('Storage backend reported a problem', sent.detail);
     return { name: candidate, ...sent };
   }
 

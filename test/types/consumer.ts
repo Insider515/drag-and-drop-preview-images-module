@@ -258,3 +258,10 @@ const ownBackend: UploadStorage = {
 };
 createUploadHandler({ root: './uploads', storage: ownBackend });
 createUploadHandler({ root: './uploads' }); // a backend is optional
+
+// --- what one client may upload -------------------------------------------
+createUploadHandler({
+  root: './uploads',
+  limits: { perClient: { files: 50, bytes: 200 * 1024 * 1024, windowMs: 60_000 } },
+});
+createUploadHandler({ root: './uploads', limits: { perClient: { files: 20 } } });

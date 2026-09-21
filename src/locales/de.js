@@ -59,6 +59,7 @@ export default {
     'srv.TYPE_NOT_ALLOWED': 'Der Server nimmt diesen Typ nicht an',
     'srv.NO_SPACE': 'Kein Speicherplatz mehr auf dem Server',
     'srv.DENIED': 'Hochladen ist nicht erlaubt',
+    'srv.QUOTA': 'Sie haben vorerst zu viel hochgeladen, bitte später erneut versuchen',
     'srv.INTERNAL': 'Interner Serverfehler',
     'srv.INFECTED': 'Die Datei wurde als Schadsoftware gemeldet',
     'srv.NOT_SCREENED': 'Die Datei konnte nicht auf Schadsoftware geprüft werden',

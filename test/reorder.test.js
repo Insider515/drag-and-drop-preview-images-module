@@ -332,3 +332,31 @@ describe('reorder: the grip a finger needs', () => {
     drop.destroy();
   });
 });
+
+describe('reorder: while an upload is running', () => {
+  test('move() answers the same as the interface does', async () => {
+    // The drag and the keyboard both refuse while busy. Letting the method
+    // through would drift the order on screen away from the order the files
+    // are going out in, for no gain: what is in flight is in flight either way.
+    const { FakeXHR } = await import('./helpers/fake-dom.js');
+    const drop = await ready(['a.png', 'b.png', 'c.png'], { endpoint: '/upload' });
+
+    const sending = drop.upload();
+    await settled();
+    assert.equal(drop.busy, true);
+
+    assert.equal(drop.move(drop.files[2].id, 0), false);
+    assert.deepEqual(order(drop), ['a.png', 'b.png', 'c.png']);
+
+    FakeXHR.last.respond(200, { uploaded: [{ name: 'a.png' }], failures: [] });
+    for (let i = 0; i < 20 && drop.busy; i += 1) {
+      await settled();
+      if (FakeXHR.last) FakeXHR.last.respond(200, { uploaded: [], failures: [] });
+    }
+    await sending;
+
+    // And works again the moment it is over.
+    assert.equal(drop.move(drop.files[2].id, 0), true);
+    drop.destroy();
+  });
+});

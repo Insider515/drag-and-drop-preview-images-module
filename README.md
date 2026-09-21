@@ -467,10 +467,11 @@ createUploadHandler({
 
   limits: {
     maxFileSize: 10 * 1024 * 1024,
-    maxFiles: 20,
+    maxFiles: 20,                     // per request, not per person; see perClient
     maxRequestSize: 100 * 1024 * 1024,
     maxPixels: 50 * 1024 * 1024,      // pixels a picture may declare; 0 turns it off
     maxBytesPerSecond: 0,             // bytes a second per upload; 0 is no limit
+    perClient: null,                  // what one client may upload across requests
     minFreeSpace: 64 * 1024 * 1024,
   },
   maxConcurrent: 8,         // uploads in flight; beyond that, 503
@@ -971,6 +972,48 @@ is handled by `onError` — a scanner answering nonsense is never read as clean.
 
 ---
 
+### What one client may upload
+
+`maxFiles` and `maxRequestSize` are limits on **one request**, and that is all they have
+ever been. It stopped being enough the moment the widget began sending a file per request so
+that an interruption would not cost a whole batch: with one file to a request, a cap of
+twenty files per request caps nothing anybody would recognise as twenty files.
+
+Measured before this existed — limits of three files and 20 KB, ten requests of one 8 KB
+file each:
+
+```
+all in one request:    5 files → 2 accepted, TOO_MANY and TOTAL_TOO_LARGE   ✓
+one file per request: 10 files → 10 accepted, 80 KB through a 20 KB limit   ✗
+```
+
+`perClient` counts across requests:
+
+```js
+createUploadHandler({
+  root: './uploads',
+  limits: {
+    perClient: { files: 50, bytes: 200 * 1024 * 1024, windowMs: 60_000 },
+  },
+});
+```
+
+The same ten requests now stop after two, having spent 16 KB of a 20 KB budget.
+
+**Keyed on something the client cannot change.** The session when `sessions` is configured,
+the remote address otherwise. A form field would not do: whoever is uploading writes those.
+
+**Refused before the body is read.** `Content-Length` is the client's own claim, so it is
+used only for the early answer — under-reporting loses them nothing but that, since the
+budget caps the file again while its bytes are read. A batch that runs out part-way keeps
+what landed and marks the rest `QUOTA`.
+
+**In this process's memory.** Behind two instances each keeps its own count, so the real
+ceiling is the figure multiplied by however many are running. Something shared is a job for
+a store this package does not have and will not grow.
+
+---
+
 ## Holding an upload to a speed
 
 Off by default. Set a rate and the server reads that slowly:
@@ -1183,7 +1226,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 539 tests
+npm test             # 553 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

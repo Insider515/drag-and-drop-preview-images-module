@@ -59,6 +59,7 @@ export default {
     'srv.TYPE_NOT_ALLOWED': 'El servidor no acepta este tipo',
     'srv.NO_SPACE': 'No queda espacio en el servidor',
     'srv.DENIED': 'No se permite subir',
+    'srv.QUOTA': 'Has subido demasiado por ahora, inténtalo más tarde',
     'srv.INTERNAL': 'Error interno del servidor',
     'srv.INFECTED': 'El archivo fue señalado como malware',
     'srv.NOT_SCREENED': 'No se pudo comprobar si el archivo contiene malware',

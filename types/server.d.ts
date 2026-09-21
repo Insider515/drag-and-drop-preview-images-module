@@ -37,6 +37,22 @@ export interface ServerLimits {
    * total can reach that many times this figure.
    */
   maxBytesPerSecond: number;
+  /**
+   * What one client may upload over a stretch of time, counted across
+   * requests. `maxFiles` and `maxRequestSize` are limits on one request,
+   * which caps little once the widget sends a file per request.
+   *
+   * Kept in this process's memory: behind two instances the real ceiling
+   * is this multiplied by however many are running.
+   */
+  perClient: {
+    /** Files in the window. */
+    files?: number;
+    /** Bytes in the window. */
+    bytes?: number;
+    /** How long the window is. 60000 by default. */
+    windowMs?: number;
+  };
 }
 
 export declare const DEFAULT_LIMITS: ServerLimits;
@@ -209,6 +225,18 @@ export interface S3StorageOptions {
 }
 
 /** An S3 backend that signs its own requests; no SDK is involved. */
+export declare function createQuota(
+  config: { files: number; bytes: number; windowMs: number },
+  now?: () => number
+): {
+  spent(key: string): { files: number; bytes: number };
+  allows(key: string, bytes: number): boolean;
+  take(key: string, bytes: number): void;
+  sweep(): number;
+  readonly size: number;
+};
+export declare function clientKey(req: UploadRequest, identity: string | null): string;
+
 export declare function createS3Storage(options: S3StorageOptions): UploadStorage;
 
 export interface UploadHandlerOptions extends UploadServiceOptions {

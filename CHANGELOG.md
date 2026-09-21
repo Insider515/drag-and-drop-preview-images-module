@@ -11,6 +11,9 @@ Everything below has landed on `master` and is not yet published to npm.
 
 ### Added
 
+- **A cap on what one client may upload**, counted across requests rather than within one.
+  `limits.perClient` takes files, bytes and a window, keyed on the session where there is one
+  and the remote address otherwise.
 - **Storage is swappable, and S3 is included.** `storage` takes a backend; leave it out and
   files go to `root` on local disk as before. The S3 backend speaks the API directly —
   request signing is Signature Version 4 over `node:crypto`, so no SDK is added — and works
@@ -51,6 +54,13 @@ Everything below has landed on `master` and is not yet published to npm.
 - Pressing Upload while a batch was still being decoded and shrunk sent the original bytes.
 - Cancelling an upload marked every file as failed, which left the queue unsendable.
 - The header buffer was not capped: a single chunk can be a whole file.
+- `maxFiles` and `maxRequestSize` stopped capping anything recognisable once the widget began
+  sending a file per request: they limit one request, and each request now held one file.
+  Measured — limits of three files and 20 KB let ten files totalling 80 KB through. The
+  README now says plainly what they limit, and `perClient` is what caps a person.
+- `move()` reordered the queue during an upload although the drag and the keyboard both
+  refuse then, so the order on screen could drift from the order files were going out in.
+- A line in the storage path that could never run.
 
 ## 2.0.0
 

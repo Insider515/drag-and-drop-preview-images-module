@@ -59,6 +59,7 @@ export default {
     'srv.TYPE_NOT_ALLOWED': 'Le serveur n’accepte pas ce type',
     'srv.NO_SPACE': 'Plus d’espace sur le serveur',
     'srv.DENIED': 'L’envoi n’est pas autorisé',
+    'srv.QUOTA': 'Vous avez envoyé trop de fichiers pour le moment, réessayez plus tard',
     'srv.INTERNAL': 'Erreur interne du serveur',
     'srv.INFECTED': 'Le fichier a été signalé comme logiciel malveillant',
     'srv.NOT_SCREENED': 'Impossible de vérifier si le fichier contient un logiciel malveillant',

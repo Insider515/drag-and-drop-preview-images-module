@@ -16,6 +16,7 @@ export { UploadService, DEFAULT_LIMITS, TEMP_PREFIX } from './upload-service.js'
 export { UploadError } from './errors.js';
 export { createScanner, screen } from './scan.js';
 export { createS3Storage } from './storage/s3.js';
+export { clientKey, createQuota, normaliseQuota } from './quota.js';
 export { canonicalRequest, encodePath, signRequest } from './sign-v4.js';
 export { DIMENSION_BYTES, readDimensions, readDimensionsWithSeek } from './dimensions.js';
 export {

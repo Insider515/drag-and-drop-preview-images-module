@@ -4,6 +4,7 @@ import { UploadError } from './errors.js';
 import { createRouter } from './http.js';
 import { DEFAULT_LIMITS, UploadService } from './upload-service.js';
 import { assertValidName } from './safe-name.js';
+import { clientKey, createQuota, normaliseQuota } from './quota.js';
 
 const require = createRequire(import.meta.url);
 
@@ -131,6 +132,10 @@ export function createUploadHandler(options = {}) {
   const maxConcurrent = Math.max(1, options.maxConcurrent ?? 8);
   const { allowedOrigins, authorize } = options;
   const sessions = normaliseSessions(options.sessions);
+  // Spans requests, unlike maxFiles and maxRequestSize, which is the point:
+  // one file to a request makes a per-request cap on files meaningless.
+  const quotaConfig = normaliseQuota(limits.perClient);
+  const quota = quotaConfig ? createQuota(quotaConfig, options.now) : null;
   const warn = (message, detail) => options.onWarning?.(message, detail);
 
   // Started here so the directory exists before the first request, but its
@@ -180,9 +185,23 @@ export function createUploadHandler(options = {}) {
     // request with nowhere to put its files should not be streamed first.
     const identity = sessions ? await resolveIdentity(req) : null;
 
+    const budgetKey = quota ? clientKey(req, identity) : null;
+    if (quota) {
+      // Content-Length is the client's own claim, so it is used only to refuse
+      // early: under-reporting loses them nothing but the early answer, since
+      // the budget is enforced again while the bytes are read. Over-reporting
+      // refuses them on their own figure.
+      const declared = Number(req.headers['content-length']);
+      const asking = Number.isFinite(declared) && declared > 0 ? declared : 0;
+      if (!quota.allows(budgetKey, asking)) {
+        res.setHeader('Retry-After', String(Math.ceil(quotaConfig.windowMs / 1000)));
+        throw new UploadError(429, 'QUOTA', 'You have uploaded too much for now, try again later');
+      }
+    }
+
     inFlight += 1;
     try {
-      const result = await readMultipart(req, identity);
+      const result = await readMultipart(req, identity, budgetKey);
       const status = result.uploaded.length === 0 && result.failures.length > 0 ? 400 : 200;
       res.status(status).json(result);
     } finally {
@@ -240,7 +259,7 @@ export function createUploadHandler(options = {}) {
    * free-space check, and the limit that matters — the total for the request —
    * could only be enforced after the fact.
    */
-  function readMultipart(req, identity) {
+  function readMultipart(req, identity, budgetKey) {
     const Busboy = loadBusboy();
     return new Promise((resolve, reject) => {
       const uploaded = [];
@@ -322,17 +341,39 @@ export function createUploadHandler(options = {}) {
             stream.resume();
             return;
           }
+          if (quota && !quota.allows(budgetKey, 1)) {
+            // The budget ran out part-way through this batch. The files that
+            // already landed stay; the rest are told why rather than being
+            // dropped without a word.
+            failures.push({
+              name: info.filename,
+              code: 'QUOTA',
+              error: 'You have uploaded too much for now, try again later',
+              params: null,
+            });
+            stream.resume();
+            return;
+          }
           try {
             // The budget left for the whole request is handed down, so a file
             // that would exceed it is stopped while it streams. Checking the
             // total afterwards looked equivalent and was not: the file that
             // went over had already been renamed into place, and the limit
             // refused it while leaving it on disk.
+            // The budget left is a ceiling on this file too, so one file
+            // cannot run far past it before anything notices.
+            const leftInBudget = quota && quotaConfig.bytes
+              ? Math.max(0, quotaConfig.bytes - quota.spent(budgetKey).bytes)
+              : Infinity;
             const stored = await service.store(info.filename, stream, {
-              maxBytes: Math.max(0, limits.maxRequestSize - total),
+              maxBytes: Math.min(Math.max(0, limits.maxRequestSize - total), leftInBudget),
               subdir: sessions?.scope === 'directory' ? identity : null,
               identity,
             });
+            // Counted after the fact rather than before: the size is only
+            // known once the file has been read, and refusing on a guess
+            // would mean refusing on the Content-Length the client claimed.
+            if (quota) quota.take(budgetKey, stored.size);
             total += stored.size;
             uploaded.push({
               name: stored.name,
@@ -393,6 +434,7 @@ export function createUploadHandler(options = {}) {
   });
 
   router.service = service;
+  router.quota = quota;
   return router;
 }
 

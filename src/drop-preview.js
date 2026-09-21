@@ -754,6 +754,12 @@ export class DropPreview {
    * @returns {boolean} false when there was nothing to do
    */
   move(id, to) {
+    // The same answer the drag and the keyboard give while an upload is
+    // running. Allowing it here would let the order on screen drift away from
+    // the order the files are actually going out in, for no gain: what is in
+    // flight is in flight either way.
+    if (this.#busy) return false;
+
     const from = this.#items.findIndex((item) => item.id === id);
     if (from === -1) return false;
 
