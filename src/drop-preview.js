@@ -70,6 +70,31 @@ export const DEFAULTS = {
   /** Show the "Remove all" button. */
   showClearButton: true,
 
+  /**
+   * Accept a picture pasted with Ctrl+V.
+   *
+   * `true` listens on the widget itself, so a paste goes to the widget the
+   * person was last working in — which is the only thing that can be right
+   * when a page has two of them. `'document'` listens on the whole page, for
+   * a page that has one and wants Ctrl+V to work without clicking first.
+   */
+  paste: true,
+
+  /**
+   * Offer a "Take a photo" button that opens the camera.
+   *
+   * `'auto'` shows it where the pointer is coarse — a phone or a tablet —
+   * because on a desktop it would open the same file dialog as the button
+   * beside it. `true` always, `false` never.
+   */
+  camera: 'auto',
+
+  /**
+   * Which camera that button opens: `'environment'` is the one facing away,
+   * for documents and objects; `'user'` is the one facing the person.
+   */
+  capture: 'environment',
+
   /** 'en' | 'uk' | 'es' | 'de' | 'fr' | your own dictionary. */
   locale: null,
   /** Colours, fonts and metrics; see src/core/theme.js. */
@@ -106,6 +131,10 @@ export class DropPreview {
   /** The batch still being decoded and shrunk, so an upload can wait for it. */
   #adding = null;
 
+  #onPaste = null;
+
+  #pasteTarget = null;
+
   #busy = false;
 
   constructor(target, options = {}) {
@@ -118,6 +147,15 @@ export class DropPreview {
     // mistake the developer meets immediately.
     this.compress = normaliseCompress(this.options.compress);
     this.retryPolicy = normaliseRetry(this.options.retry);
+    if (![true, false, 'document'].includes(this.options.paste)) {
+      throw new Error("paste must be true, false, or 'document'");
+    }
+    if (![true, false, 'auto'].includes(this.options.camera)) {
+      throw new Error("camera must be true, false, or 'auto'");
+    }
+    if (!['environment', 'user'].includes(this.options.capture)) {
+      throw new Error("capture must be 'environment' or 'user'");
+    }
     const perRequest = this.options.filesPerRequest;
     if (!Number.isInteger(perRequest) || perRequest < 0) {
       throw new Error('filesPerRequest must be a whole number, 0 for all at once');
@@ -165,6 +203,19 @@ export class DropPreview {
       on: { change: () => this.#onPicked() },
     });
 
+    // A second input, because one cannot be both. `capture` tells a phone to
+    // open the camera, and a browser that honours it ignores `multiple` — a
+    // camera returns one photograph. Putting it on the main input would mean
+    // giving up choosing from the gallery, which is what most uploads are.
+    this.cameraInput = el('input.ddp-input', {
+      type: 'file',
+      id: `ddp-camera-${id}`,
+      accept: 'image/*',
+      capture: this.options.capture,
+      'aria-label': this.t('common.takePhoto'),
+      on: { change: () => this.#onCaptured() },
+    });
+
     this.button = el('span.ddp-fake-btn', { text: this.t('drop.button') });
     this.message = el('span.ddp-msg', { text: this.t('drop.hint') });
 
@@ -190,9 +241,27 @@ export class DropPreview {
     }, [this.progressBar]);
 
     this.actions = el('div.ddp-actions');
-    this.root.append(this.zone, this.status, this.progress, this.previews, this.actions);
+
+    // Its own row, not the action row: that one is hidden while the queue is
+    // empty, which is exactly when somebody wants to take a photograph. A
+    // label rather than a button, because it has to open its own input, and
+    // the drop zone is already a label wrapping the other one — nesting them
+    // would make a click on either ambiguous.
+    this.sources = el('div.ddp-sources');
+    if (this.#wantsCamera()) {
+      this.cameraButton = el('label.ddp-btn.ddp-camera', {
+        for: `ddp-camera-${id}`,
+        text: this.t('common.takePhoto'),
+      }, [this.cameraInput]);
+      this.sources.append(this.cameraButton);
+    }
+
+    this.root.append(
+      this.zone, this.sources, this.status, this.progress, this.previews, this.actions
+    );
     this.#buildActions();
     this.#wireDrag();
+    this.#wirePaste();
 
     this.host.append(this.root);
     this.#render();
@@ -273,6 +342,62 @@ export class DropPreview {
   }
 
   // --------------------------------------------------------------- queue
+
+  /**
+   * Whether to offer the camera at all.
+   *
+   * On a desktop the button would open the same file dialog as the one beside
+   * it, so `'auto'` asks the browser whether the pointer is coarse — which is
+   * the closest thing to "this is a phone" that does not involve guessing from
+   * the user agent string.
+   */
+  #wantsCamera() {
+    if (this.options.camera === false) return false;
+    if (this.options.camera === true) return true;
+    try {
+      return Boolean(globalThis.matchMedia?.('(pointer: coarse)')?.matches);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Pasting a picture.
+   *
+   * Listening on the widget rather than the page is deliberate: two of these
+   * on one screen would otherwise both take the same paste, and the module
+   * registers nothing globally by design. `paste: 'document'` opts into the
+   * other behaviour for a page that has one widget.
+   */
+  #wirePaste() {
+    if (!this.options.paste) return;
+    const target = this.options.paste === 'document' ? document : this.root;
+
+    this.#onPaste = (event) => {
+      if (this.#destroyed) return;
+      // Somebody typing into a field is pasting into that field, not here.
+      const into = event.target;
+      const tag = into?.tagName;
+      if (into?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (into !== this.input && into !== this.cameraInput) return;
+      }
+      const files = [...(event.clipboardData?.files ?? [])];
+      if (files.length === 0) return;
+      event.preventDefault();
+      this.add(files);
+    };
+    target.addEventListener('paste', this.#onPaste);
+    this.#pasteTarget = target;
+  }
+
+  /** A photograph straight from the camera. */
+  #onCaptured() {
+    const taken = [...(this.cameraInput.files ?? [])];
+    if (taken.length) this.add(taken);
+    // Cleared so the same photograph can be taken twice without the browser
+    // deciding nothing changed.
+    this.cameraInput.value = '';
+  }
 
   #onPicked() {
     const picked = [...(this.input.files ?? [])];
@@ -936,6 +1061,12 @@ export class DropPreview {
     this.#items = [];
     this.#tiles.clear();
     this.#listeners.clear();
+    // A page-level paste listener would otherwise outlive the widget it was
+    // feeding, and go on adding files to a queue nobody can see.
+    if (this.#onPaste && this.#pasteTarget) {
+      this.#pasteTarget.removeEventListener('paste', this.#onPaste);
+      this.#onPaste = null;
+    }
     this.root.remove();
   }
 }

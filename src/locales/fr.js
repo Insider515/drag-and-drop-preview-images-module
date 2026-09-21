@@ -14,6 +14,7 @@ export default {
     'common.remove': 'Retirer',
     'common.removeAll': 'Tout retirer',
     'common.upload': 'Envoyer',
+    'common.takePhoto': 'Prendre une photo',
     'common.done': 'Terminé',
     'unit.b': 'o',
     'unit.kb': 'Ko',

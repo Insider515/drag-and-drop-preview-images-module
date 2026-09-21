@@ -205,3 +205,8 @@ async function tryAgain() {
 new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 1 });
 new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 5 });
 new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 0 });
+
+// --- where a picture can come from ----------------------------------------
+new DropPreview('#images', { paste: true, camera: 'auto', capture: 'environment' });
+new DropPreview('#images', { paste: 'document', camera: true, capture: 'user' });
+new DropPreview('#images', { paste: false, camera: false });

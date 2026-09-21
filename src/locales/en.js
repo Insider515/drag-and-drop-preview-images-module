@@ -22,6 +22,7 @@ export default {
     'common.remove': 'Remove',
     'common.removeAll': 'Remove all',
     'common.upload': 'Upload',
+    'common.takePhoto': 'Take a photo',
     'common.done': 'Done',
 
     // --------------------------------------------------------- file size

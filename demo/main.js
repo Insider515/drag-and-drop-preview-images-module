@@ -26,6 +26,8 @@ let allowSvg = false;
 let quality = 'off';
 let maxSize = 0;
 let autoRetry = false;
+let pasteMode = true;
+let cameraMode = 'auto';
 let drop = mount();
 
 const BRAND = {
@@ -62,6 +64,8 @@ function mount() {
     theme: palette ? BRAND : null,
     compress: compressOption(),
     retry: autoRetry ? { attempts: 3, delay: 800 } : null,
+    paste: pasteMode,
+    camera: cameraMode,
     limits: { maxFiles: 12, maxFileSize: 8 * 1024 * 1024 },
   });
 
@@ -201,6 +205,21 @@ breakButton.addEventListener('click', async () => {
   } finally {
     breakButton.disabled = false;
   }
+});
+
+const pasteButton = document.getElementById('paste');
+pasteButton.addEventListener('click', () => {
+  pasteMode = pasteMode === true ? 'document' : (pasteMode === 'document' ? false : true);
+  pasteButton.textContent = `Paste: ${pasteMode === true ? 'on' : pasteMode || 'off'}`;
+  remount();
+  say(`paste: ${pasteMode === 'document' ? 'anywhere on the page' : pasteMode ? 'inside the widget' : 'off'}`);
+});
+
+const cameraButton = document.getElementById('camera');
+cameraButton.addEventListener('click', () => {
+  cameraMode = cameraMode === 'auto' ? true : (cameraMode === true ? false : 'auto');
+  cameraButton.textContent = `Camera button: ${cameraMode === true ? 'always' : cameraMode || 'never'}`;
+  remount();
 });
 
 const logButton = document.getElementById('logtoggle');

@@ -40,7 +40,9 @@
       <strong>simulation</strong> so that the demo needs no API key: with it on, any file whose
       name contains <code>virus</code> is reported as malware. The real one is a VirusTotal
       hash lookup. <strong>Break the next upload</strong> makes the server answer the next
-      upload with 503 once, so you can watch retries happen — with auto retry off you get the Retry
+      upload with 503 once, so you can watch retries happen. Ctrl+V a screenshot anywhere in
+      the widget to paste it. The camera button appears on a phone; <strong>Camera
+      button</strong> forces it on here so you can see it — with auto retry off you get the Retry
       button instead. The history panel at the bottom belongs to this page, not to the widget —
       it is not part of the package, and the button above removes it.
     </p>
@@ -70,6 +72,8 @@
       </select>
       <button id="scan" type="button">Malware check: off</button>
       <button id="retry" type="button">Auto retry: off</button>
+      <button id="paste" type="button">Paste: on</button>
+      <button id="camera" type="button">Camera button: auto</button>
       <button id="breaknet" type="button">Break the next upload: off</button>
       <button id="logtoggle" type="button">Upload history: shown</button>
     </div>

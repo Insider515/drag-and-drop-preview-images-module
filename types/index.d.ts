@@ -269,6 +269,18 @@ export interface DropPreviewOptions {
   autoUpload?: boolean;
   showUploadButton?: boolean;
   showClearButton?: boolean;
+  /**
+   * Accept a picture pasted with Ctrl+V. `true` (the default) listens on the
+   * widget, `'document'` on the whole page, `false` not at all.
+   */
+  paste?: boolean | 'document';
+  /**
+   * Offer a "Take a photo" button. `'auto'` (the default) shows it where the
+   * pointer is coarse — a phone or a tablet.
+   */
+  camera?: boolean | 'auto';
+  /** Which camera that button opens. `'environment'` by default. */
+  capture?: 'environment' | 'user';
 
   locale?: LocaleId | string | LocaleDictionary | null;
   theme?: Theme | null;
@@ -295,6 +307,8 @@ export declare class DropPreview {
   readonly root: HTMLElement;
   readonly host: HTMLElement;
   readonly input: HTMLInputElement;
+  /** The second input, behind the camera button. */
+  readonly cameraInput: HTMLInputElement;
   readonly options: Required<DropPreviewOptions>;
   readonly locale: LocaleDictionary;
   readonly limits: Limits;

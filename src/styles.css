@@ -306,6 +306,28 @@
   display: none;
 }
 
+/*
+ * Where a picture can come from, besides the drop zone. Its own row, because
+ * the action row below is hidden while the queue is empty — which is exactly
+ * when the camera is wanted.
+ */
+.ddp-sources:empty {
+  display: none;
+}
+
+.ddp-sources {
+  display: flex;
+  gap: var(--ddp-gap);
+  margin-top: var(--ddp-gap);
+}
+
+/* A label carrying its own input, so it needs what a button gets for free. */
+.ddp-camera {
+  display: inline-block;
+  position: relative;
+  text-align: center;
+}
+
 .ddp-btn {
   padding: 8px 16px;
   font: inherit;

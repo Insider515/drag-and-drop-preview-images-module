@@ -29,6 +29,11 @@ export class FakeNode {
     this.textContent = '';
     this.hidden = false;
     this.disabled = false;
+    // A real input has these as properties, so `el()` assigns rather than
+    // setting an attribute. The fake has to agree, or a case measures the
+    // fake instead of the widget.
+    this.multiple = false;
+    this.value = '';
     this.files = null;
   }
 
@@ -196,7 +201,23 @@ export function installDom() {
   };
 
   globalThis.Node = FakeNode; // `el()` asks `child instanceof Node`
+  // The document itself takes listeners, for the widget that asks to hear
+  // pastes from the whole page rather than only from its own element.
+  const documentListeners = new Map();
   globalThis.document = {
+    addEventListener(type, handler) {
+      if (!documentListeners.has(type)) documentListeners.set(type, []);
+      documentListeners.get(type).push(handler);
+    },
+    removeEventListener(type, handler) {
+      const all = documentListeners.get(type) ?? [];
+      const at = all.indexOf(handler);
+      if (at !== -1) all.splice(at, 1);
+    },
+    fire(type, event = {}) {
+      for (const handler of [...(documentListeners.get(type) ?? [])]) handler(event);
+    },
+    listenerCount: (type) => (documentListeners.get(type) ?? []).length,
     createElement: (tag) => (String(tag).toLowerCase() === 'canvas'
       ? makeCanvas(new FakeNode(tag))
       : new FakeNode(tag)),
@@ -252,6 +273,7 @@ export function installDom() {
     reset() {
       urls.clear();
       canvas.reset();
+      documentListeners.clear();
       FakeXHR.last = null;
       Object.assign(decode, { width: 4, height: 4, fail: false, delayMs: 0, manual: false });
       decode.pending.length = 0;

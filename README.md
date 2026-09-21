@@ -126,6 +126,8 @@ app.listen(3000);
 | Previews | Thumbnails drawn from the files themselves, with name and size |
 | Selective removal | Each tile has its own remove button; "Remove all" clears the queue |
 | Drag & drop | Onto the zone, with the highlight surviving the pointer crossing child elements |
+| Paste | Ctrl+V a screenshot into the widget, or the whole page |
+| Camera | A Take a photo button on a phone, without giving up the gallery |
 | Identification | The type is read from the file's leading bytes, never from the extension |
 | Limits | Per file, per queue, file count, and decoded pixels |
 | Upload | Progress and cancellation, or none at all if you keep it a form field |
@@ -136,6 +138,77 @@ app.listen(3000);
 | Sessions | A folder per visitor, and who uploaded what in the answer |
 | Malware screening | A hash lookup, so the file itself never leaves your server |
 | Retrying | A dropped connection is sent again; a refused file is not |
+
+---
+
+## Where a picture can come from
+
+Four ways in, and the last two are on by default:
+
+| | |
+|---|---|
+| The button | Opens the file picker |
+| Dragging | Onto the zone, from the desktop or another window |
+| **Pasting** | Ctrl+V a screenshot, or an image copied from a page |
+| **The camera** | A "Take a photo" button, on a phone |
+
+### Pasting
+
+```js
+new DropPreview('#images', {
+  paste: true,        // the default
+});
+```
+
+`true` listens on the widget, so a paste goes to the one the person was last working in.
+That is the only thing that can be right when a page has two of them, and it is why the
+module still registers nothing globally.
+
+In practice: click the drop zone once, then Ctrl+V. For a page with a single widget that
+wants Ctrl+V to work without clicking first:
+
+```js
+paste: 'document',
+```
+
+That listens on the whole page — but not over somebody's shoulder: a paste into an
+`<input>`, a `<textarea>` or anything `contenteditable` belongs to that field and is left
+alone. A paste carrying no files at all is left alone too, so ordinary text still pastes
+where it was aimed.
+
+Pasted pictures go through every check the others do. A screenshot that is really a text
+file is refused exactly the same way.
+
+`paste: false` attaches nothing.
+
+### The camera
+
+```js
+new DropPreview('#images', {
+  camera: 'auto',           // the default
+  capture: 'environment',   // the camera facing away; 'user' faces the person
+});
+```
+
+A **Take a photo** button appears beside the drop zone, and opens the camera directly
+rather than the file picker.
+
+**`'auto'` means "where the pointer is coarse"** — a phone or a tablet. On a desktop the
+button would open the same file dialog as the one next to it, which is noise. `true` shows
+it everywhere, `false` nowhere. A browser too old to be asked is treated as a desktop.
+
+**It is a second input, and that is not an implementation detail.** A browser that honours
+`capture` ignores `multiple`, because a camera returns one photograph. Putting `capture` on
+the main input would mean giving up choosing several pictures from the gallery — which is
+what most uploads are. So the camera gets its own input, and the main one is untouched:
+
+```
+main input     multiple, accept: every format the sniffer knows
+camera input   one photo, accept: image/*, capture: environment
+```
+
+The button sits in its own row rather than with Upload and Remove all, because that row is
+hidden while the queue is empty — which is exactly when somebody wants to take a photograph.
 
 ---
 
@@ -159,6 +232,10 @@ new DropPreview(target, {
   autoUpload: false,      // upload as soon as files are chosen
   showUploadButton: true,
   showClearButton: true,
+
+  paste: true,            // Ctrl+V; 'document' listens on the whole page
+  camera: 'auto',         // a Take a photo button where the pointer is coarse
+  capture: 'environment', // which camera it opens
 
   locale: null,           // 'en' | 'uk' | 'es' | 'de' | 'fr' | your dictionary
   theme: null,            // colours, fonts, metrics
@@ -877,7 +954,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 436 tests
+npm test             # 459 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
@@ -898,6 +975,8 @@ and watched rather than read about:
 | Resize | `off`, 1920, 1024, 512, 128×128 px |
 | Malware check | Turns screening on at the server |
 | Auto retry | Three attempts with a growing wait, instead of one |
+| Paste | Inside the widget, anywhere on the page, or off |
+| Camera button | Forces the button on, so it can be seen on a desktop |
 | Break the next upload | Answers the next upload 503 once, so a retry can be watched |
 | Upload history | Removes the history panel — it belongs to the page, not the widget |
 

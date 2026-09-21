@@ -14,6 +14,7 @@ export default {
     'common.remove': 'Видалити',
     'common.removeAll': 'Видалити все',
     'common.upload': 'Завантажити',
+    'common.takePhoto': 'Зробити фото',
     'common.done': 'Готово',
     'unit.b': 'Б',
     'unit.kb': 'КБ',
