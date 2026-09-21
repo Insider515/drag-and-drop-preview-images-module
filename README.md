@@ -139,6 +139,7 @@ app.listen(3000);
 | Sessions | A folder per visitor, and who uploaded what in the answer |
 | Malware screening | A hash lookup, so the file itself never leaves your server |
 | Retrying | A dropped connection is sent again; a refused file is not |
+| Storage | Local disk, or S3 and anything speaking its API — no SDK |
 
 ---
 
@@ -1023,6 +1024,92 @@ because a pause does not un-deliver a chunk already in flight.
 
 ---
 
+## Where the files go
+
+On local disk under `root`, unless you say otherwise. That is what every version before
+this one did, and it is what most deployments want.
+
+For anything else — S3, or a container whose disk vanishes with it — pass a backend:
+
+```js
+import { createUploadHandler, createS3Storage } from 'drag-and-drop-preview-images-module/server';
+
+createUploadHandler({
+  root: './uploads',            // still needed: see below
+  storage: createS3Storage({
+    bucket: 'photos',
+    region: 'eu-central-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  }),
+});
+```
+
+### No SDK
+
+The request is a `PUT` with a Signature Version 4 header computed from `node:crypto`. That
+algorithm is published, not proprietary, and writing it out is what keeps a module whose
+point is having no dependencies from acquiring a tree of them for one HTTP request. It is
+checked against AWS's own published test vectors — the same key, region and instant their
+documentation uses — so the arithmetic is verified against its author rather than against a
+reading of it.
+
+`endpoint` points the same code at anything S3-compatible: Cloudflare R2, MinIO, DigitalOcean
+Spaces, Backblaze B2.
+
+```js
+createS3Storage({
+  bucket: 'photos',
+  region: 'auto',
+  endpoint: 'https://<account>.r2.cloudflarestorage.com',
+  accessKeyId: …, secretAccessKey: …,
+  prefix: 'incoming',                                   // a folder in the bucket
+  acl: 'public-read',                                   // left out, the bucket decides
+  publicUrl: (key) => `https://cdn.example/${key}`,      // for a CDN in front
+});
+```
+
+### `root` is still required, and that is on purpose
+
+A file goes to a temporary local file first, is read and checked there, and only then is
+sent on. Everything the package refuses — the type read from the bytes, the dimensions it
+declares, the size, the malware screening — can only be decided by looking at the whole
+file. None of it can be asked about bytes that have already left for a bucket, and a file
+refused after it is in the bucket is a file somebody has to go and delete.
+
+So the disk is used as scratch space, not as storage: the temp copy is removed whether the
+backend took the file or refused it. The space needed at any moment is roughly
+`maxFileSize × maxConcurrent`.
+
+### A backend of your own
+
+Two methods, and only the first is required:
+
+```js
+const storage = {
+  async put(name, filePath, { type, size, sha256 }) {
+    // filePath is a local temp file, already checked. Return where it landed.
+    return { key: name, url: `https://files.example/${name}` };
+  },
+  async exists(name) {
+    return false;   // used to avoid taking a name twice; skip it and names collide
+  },
+};
+```
+
+`onConflict` works the same as on disk: `rename` suffixes, `refuse` answers 409, `overwrite`
+does not ask. With `sessions` on, the session id becomes a folder in the bucket exactly as
+it does on disk.
+
+### What the client is told
+
+The answer's `path` becomes the URL rather than a filesystem path, and `key` and `etag` join
+it. Nothing about your bucket's internals reaches whoever is uploading: a refusal from the
+service is logged with its reason through `onWarning` and reported to the client as a plain
+"the file could not be stored".
+
+---
+
 ## Security
 
 The theme throughout: **the file's own bytes decide, and the server decides again.**
@@ -1096,7 +1183,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 508 tests
+npm test             # 539 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
@@ -1156,6 +1243,9 @@ server/             the back end
   safe-name.js        names and containment
   sniff.js            the same identification, server side
   http.js             the small router it runs on; no framework
+  dimensions.js       how large a picture says it is, from its header
+  sign-v4.js          request signing for S3, over node:crypto alone
+  storage/s3.js       the S3 backend; nothing else needs it
 types/              hand-written .d.ts, checked by `npm run typecheck`
 demo/               the demonstration page
 test/               tests

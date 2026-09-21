@@ -21,9 +21,11 @@ import {
 
 import {
   UploadService,
+  createS3Storage,
   createUploadHandler,
   type UploadHandler,
   type UploadResult,
+  type UploadStorage,
 } from 'drag-and-drop-preview-images-module/server';
 
 // --------------------------------------------------------------- the widget
@@ -233,3 +235,26 @@ createUploadHandler({
   root: './uploads',
   limits: { maxBytesPerSecond: 512 * 1024 },
 });
+
+// --- storage backends -----------------------------------------------------
+
+createUploadHandler({
+  root: './uploads',
+  storage: createS3Storage({
+    bucket: 'photos',
+    region: 'eu-central-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+    prefix: 'incoming',
+    publicUrl: (key) => `https://cdn.example/${key}`,
+  }),
+});
+
+const ownBackend: UploadStorage = {
+  async put(name, filePath, about) {
+    return { key: name, url: `https://files.example/${name}`, etag: about.sha256 };
+  },
+  async exists() { return false; },
+};
+createUploadHandler({ root: './uploads', storage: ownBackend });
+createUploadHandler({ root: './uploads' }); // a backend is optional

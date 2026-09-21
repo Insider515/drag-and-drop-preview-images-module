@@ -74,6 +74,12 @@ export class UploadService {
     }
     this.renameHook = options.rename ?? null;
     this.scanner = createScanner(options.scan);
+    // Where finished files go. Left out, they stay on local disk, which is
+    // what every version before this one did and what most deployments want.
+    this.storage = options.storage ?? null;
+    if (this.storage && typeof this.storage.put !== 'function') {
+      throw new Error('storage must have a put(name, path, about) method');
+    }
     this.warn = options.onWarning ?? (() => {});
     this.#madeDirs = new Set();
   }
@@ -182,6 +188,30 @@ export class UploadService {
       }
     }
 
+    // Somewhere else than this disk. The file has already been read, checked
+    // and screened, which is the whole reason it went to a temp file first:
+    // none of those questions can be asked about bytes that have already left.
+    if (this.storage) {
+      let sent;
+      try {
+        sent = await this.#send(temp, name, outcome, options.identity ?? null);
+      } finally {
+        // Whether the backend took it or refused it, this copy has done its
+        // job. Leaving it behind on a failure is how a disk fills up with the
+        // files that never made it anywhere.
+        await fs.rm(temp, { force: true });
+      }
+      return {
+        name: sent.name,
+        size: outcome.size,
+        type: outcome.type,
+        path: sent.url,
+        key: sent.key,
+        etag: sent.etag ?? null,
+        sha256: outcome.sha256,
+      };
+    }
+
     const stored = await this.#claim(temp, dir, name, outcome.type, options.identity ?? null);
     return {
       name: stored.name,
@@ -191,6 +221,43 @@ export class UploadService {
       directory: dir,
       sha256: outcome.sha256,
     };
+  }
+
+  /**
+   * Hand a finished file to the storage backend, under a name nothing else
+   * has taken.
+   *
+   * The temp file stays until the backend has said yes. A failure there leaves
+   * nothing behind and nothing half-stored — the caller deletes the temp copy
+   * and the batch reports the file as failed, the same as any other refusal.
+   */
+  async #send(temp, name, outcome, identity) {
+    const chosen = this.renameHook
+      ? assertValidName(this.renameHook(name, { type: outcome.type, identity }))
+      : name;
+    const prefixed = identity ? `${identity}/${chosen}` : chosen;
+
+    let candidate = prefixed;
+    if (this.onConflict !== 'overwrite' && typeof this.storage.exists === 'function') {
+      for (let attempt = 1; attempt < 100; attempt += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        if (!(await this.storage.exists(candidate))) break;
+        if (this.onConflict === 'refuse') {
+          throw new UploadError(409, 'EXISTS', `“${candidate}” already exists`, { name: candidate });
+        }
+        candidate = identity
+          ? `${identity}/${withSuffix(chosen, attempt + 1)}`
+          : withSuffix(chosen, attempt + 1);
+      }
+    }
+
+    const sent = await this.storage.put(candidate, temp, {
+      type: outcome.type,
+      size: outcome.size,
+      sha256: outcome.sha256,
+    });
+    if (sent?.detail) this.warn('Storage backend reported a problem', sent.detail);
+    return { name: candidate, ...sent };
   }
 
   /**

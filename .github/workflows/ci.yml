@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing version should still leave the others' results readable.
+      fail-fast: false
+      matrix:
+        # The oldest the package claims to support, the current LTS, and the
+        # current release. A test that only ever runs on one of them is a test
+        # that finds out about the others from an issue report.
+        node: ['18', '20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `ci`, not `install`: it installs exactly the lockfile and fails if the
+      # two have drifted, which is the point of running this at all.
+      - run: npm ci
+
+      # Before the tests: some of them import the built entry, and a build
+      # that is broken should say so as itself rather than as a failing test.
+      - run: npm run build
+
+      - run: npm test
+
+      - run: npm run typecheck

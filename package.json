@@ -4,15 +4,42 @@
   "type": "module",
   "description": "Embeddable image drop zone: a dependency-free widget with previews and a framework-free Node upload handler",
   "keywords": [
-    "drag-and-drop", "dropzone", "drop-zone", "file-upload", "image-upload",
-    "upload", "uploader", "preview", "image-preview", "thumbnail",
-    "file", "files", "images", "widget", "component", "ui", "frontend",
-    "vanilla-js", "no-dependencies", "node", "nodejs", "express",
-    "express-middleware", "adonisjs", "fastify", "nestjs",
-    "multipart", "form-data", "i18n", "typescript", "dark-mode"
+    "drag-and-drop",
+    "dropzone",
+    "drop-zone",
+    "file-upload",
+    "image-upload",
+    "upload",
+    "uploader",
+    "preview",
+    "image-preview",
+    "thumbnail",
+    "file",
+    "files",
+    "images",
+    "widget",
+    "component",
+    "ui",
+    "frontend",
+    "vanilla-js",
+    "no-dependencies",
+    "node",
+    "nodejs",
+    "express",
+    "express-middleware",
+    "adonisjs",
+    "fastify",
+    "nestjs",
+    "multipart",
+    "form-data",
+    "i18n",
+    "typescript",
+    "dark-mode"
   ],
   "homepage": "https://github.com/Insider515/drag-and-drop-preview-images-module#readme",
-  "bugs": { "url": "https://github.com/Insider515/drag-and-drop-preview-images-module/issues" },
+  "bugs": {
+    "url": "https://github.com/Insider515/drag-and-drop-preview-images-module/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Insider515/drag-and-drop-preview-images-module.git"
@@ -35,9 +62,25 @@
     },
     "./package.json": "./package.json"
   },
-  "typesVersions": { "*": { "server": ["./types/server.d.ts"] } },
-  "files": ["dist", "types", "server", "!server/standalone.js", "LICENSE", "README.md"],
-  "sideEffects": ["**/*.css"],
+  "typesVersions": {
+    "*": {
+      "server": [
+        "./types/server.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "types",
+    "server",
+    "!server/standalone.js",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
   "scripts": {
     "dev": "node server/standalone.js --vite",
     "build": "vite build",
@@ -48,12 +91,16 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm test && npm run typecheck"
   },
-  "dependencies": { "busboy": "^1.6.0" },
+  "dependencies": {
+    "busboy": "^1.6.0"
+  },
   "devDependencies": {
     "@types/node": "^22.20.1",
     "express": "^4.21.2",
     "typescript": "^5.9.3",
     "vite": "^5.4.11"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

@@ -172,6 +172,45 @@ export interface UploadRequest extends IncomingMessage {
   body: any;
 }
 
+/**
+ * Where finished files go.
+ *
+ * Leave it out and they stay on local disk under `root`, which is what every
+ * version before this one did. A backend is handed a file that has already
+ * been read, checked and screened — none of those questions can be asked
+ * about bytes that have already left.
+ */
+export interface UploadStorage {
+  /** Send one finished file. Returns what it is called and where it can be read. */
+  put(
+    name: string,
+    path: string,
+    about: { type: string; size: number; sha256: string }
+  ): Promise<{ key?: string; url?: string; etag?: string | null }>;
+  /** Whether something is already there, so a name is not taken twice. */
+  exists?(name: string): Promise<boolean>;
+}
+
+export interface S3StorageOptions {
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** For temporary credentials. */
+  sessionToken?: string;
+  /** For anything S3-compatible: R2, MinIO, Spaces. */
+  endpoint?: string;
+  /** A folder inside the bucket. */
+  prefix?: string;
+  /** e.g. 'public-read'. Left out, the bucket's own policy decides. */
+  acl?: string;
+  /** How to build the URL handed back, for a bucket served through a CDN. */
+  publicUrl?: (key: string) => string;
+}
+
+/** An S3 backend that signs its own requests; no SDK is involved. */
+export declare function createS3Storage(options: S3StorageOptions): UploadStorage;
+
 export interface UploadHandlerOptions extends UploadServiceOptions {
   /**
    * Prefix to strip from the URL when the host does not rewrite `req.url` —
@@ -194,6 +233,8 @@ export interface UploadHandlerOptions extends UploadServiceOptions {
   ) => boolean | Promise<boolean>;
   /** Off unless set; see {@link SessionOptions}. */
   sessions?: SessionOptions;
+  /** Off unless set; see {@link UploadStorage}. */
+  storage?: UploadStorage;
   onWarning?: (message: string, detail?: unknown) => void;
 }
 
