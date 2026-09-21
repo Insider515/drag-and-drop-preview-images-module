@@ -54,6 +54,8 @@ const uploadScreened = createUploadHandler({
 });
 
 let screening = false;
+/** Demo-only: make the next upload fail once, with a code worth retrying. */
+let failNext = false;
 
 const TYPES = new Map(Object.entries({
   '.html': 'text/html; charset=utf-8',
@@ -103,7 +105,20 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ screening }));
     return;
   }
+  if ((req.url ?? '').startsWith('/api/demo/fail')) {
+    failNext = new URL(req.url, 'http://localhost').searchParams.get('on') === '1';
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ failNext }));
+    return;
+  }
   if ((req.url ?? '').startsWith('/api/upload')) {
+    if (failNext && req.method === 'POST') {
+      failNext = false;
+      res.statusCode = 503;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ error: 'The server is busy, try again', code: 'BUSY' }));
+      return;
+    }
     await (screening ? uploadScreened : upload)(req, res);
     return;
   }

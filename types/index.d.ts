@@ -214,6 +214,29 @@ export declare function readExifOrientation(
   end: number
 ): number;
 
+/**
+ * Sending a failed upload again.
+ *
+ * Leave the block out and one failure is the end of it, which is the default.
+ * Only failures that are about the connection rather than about the file are
+ * repeated; see {@link isRetryable}.
+ */
+export interface RetryOptions {
+  /** Attempts in total, counting the first. 3 by default. */
+  attempts?: number;
+  /** Milliseconds before the second attempt. 1000 by default. */
+  delay?: number;
+  /** What each wait is multiplied by. 2 by default. */
+  backoff?: number;
+  /** The longest any single wait may be. 30000 by default. */
+  maxDelay?: number;
+}
+
+/** Is this failure about the moment rather than about the file? */
+export declare function isRetryable(code: string, status?: number): boolean;
+export declare function normaliseRetry(raw: RetryOptions | null | undefined): object | null;
+export declare function delayBefore(config: object, attempt: number): number;
+
 export interface DropPreviewOptions {
   /**
    * Where to POST the files. Left null, the widget stays a form field: the
@@ -234,6 +257,8 @@ export interface DropPreviewOptions {
   limits?: Partial<Limits> | null;
   /** Off unless set; see {@link CompressOptions}. */
   compress?: CompressOptions;
+  /** Off unless set; see {@link RetryOptions}. */
+  retry?: RetryOptions;
 
   autoUpload?: boolean;
   showUploadButton?: boolean;
@@ -249,6 +274,13 @@ export interface DropPreviewEvents {
   rejected: { rejected: Rejection[] };
   uploaded: { answer: unknown; files: QueuedFile[] };
   error: { error: unknown; code: string; message: string };
+  /** An upload is about to be sent again after a failure worth repeating. */
+  retry: { attempt: number; of: number; delay: number; code: string };
+  /**
+   * Something optional did not work, and the widget carried on without it —
+   * a picture that could not be shrunk is sent as it came, not lost.
+   */
+  warning: { code: string; error: unknown; file?: File };
 }
 
 export declare class DropPreview {
@@ -272,6 +304,14 @@ export declare class DropPreview {
   clear(): void;
   upload(): Promise<unknown | null>;
   cancel(): void;
+  /**
+   * Send again what failed for a reason worth repeating. Files refused for
+   * what they are — too large, not an image, reported as malware — are left
+   * alone, since another attempt gives the same answer.
+   */
+  retry(): Promise<object | null>;
+  /** Whether anything in the queue failed for a reason worth repeating. */
+  readonly retryable: boolean;
   describeError(code: string, detail?: Record<string, unknown> | null): string;
 
   on<K extends keyof DropPreviewEvents>(

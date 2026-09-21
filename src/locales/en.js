@@ -48,6 +48,7 @@ export default {
     'status.uploaded': 'Uploaded',
     'status.failed': 'Failed',
     'status.cancelled': 'Upload cancelled',
+    'status.retrying': 'Upload failed — trying again ({attempt} of {total})',
     'status.someFailed': 'Uploaded {done}, failed {failed}',
 
     // ------------------------------------ why a file was not accepted

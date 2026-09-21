@@ -38,6 +38,8 @@ option block; leave it out and that code never runs:
   visitor from another, including anonymous ones.
 - **[Screen uploads for malware](#screening-uploads-for-malware)** — a VirusTotal hash
   lookup, or your own scanner. Only a hash leaves your server; the file does not.
+- **[Try again after a failure](#trying-again-after-a-failure)** — automatically, or on a
+  button, and only for the failures that are about the connection rather than the file.
 
 Size and shape: 13 KB of JS and 2 KB of CSS gzipped on the page, zero runtime
 dependencies. The server half is a single `(req, res)` function that mounts in Express,
@@ -131,6 +133,7 @@ app.listen(3000);
 | Compression | Resize, re-encode, or strip metadata losslessly — on the page, before sending |
 | Sessions | A folder per visitor, and who uploaded what in the answer |
 | Malware screening | A hash lookup, so the file itself never leaves your server |
+| Retrying | A dropped connection is sent again; a refused file is not |
 
 ---
 
@@ -148,6 +151,7 @@ new DropPreview(target, {
   allowSvg: false,        // SVG is XML that can carry script; opt-in
   limits: null,           // see below
   compress: null,         // shrink pictures before sending; see below
+  retry: null,            // send a failed upload again; see below
 
   autoUpload: false,      // upload as soon as files are chosen
   showUploadButton: true,
@@ -473,6 +477,88 @@ drop.on('change', ({ files }) => {
 
 ---
 
+## Trying again after a failure
+
+Off by default: one failure is the end of it, and the tiles say why.
+
+Turn it on with a `retry` block and a failed upload is sent again by itself:
+
+```js
+new DropPreview('#images', {
+  endpoint: '/upload',
+  retry: { attempts: 3 },
+});
+```
+
+There is also a button and a method, and both work whether or not the block is there.
+
+### It repeats the failure, not the file
+
+A failed upload is two different things, and treating them alike makes a retry button
+either useless or annoying:
+
+| | |
+|---|---|
+| **Worth repeating** | `NETWORK`, `INTERNAL`, `BUSY`, `SCAN_FAILED`, `NO_SPACE`, and any `HTTP_ERROR` with a 5xx status |
+| **Not** | `TOO_LARGE`, `NOT_AN_IMAGE`, `TYPE_NOT_ALLOWED`, `INFECTED`, `INVALID_NAME`, `DENIED`, a 4xx — and `ABORTED`, because that was the person's own decision |
+
+The connection dropping is about the moment. The file being too large is about the file:
+sending it again produces the same refusal, more slowly, and buries the reason under a
+spinner. So only the first kind is repeated, and the second keeps its explanation on the
+tile.
+
+In a mixed batch this matters. Two files fail, one because the gateway answered 502 and one
+because it is a text file with a `.png` name — only the first goes back on the wire.
+
+### The settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `attempts` | `3` | Attempts in total, counting the first |
+| `delay` | `1000` | Milliseconds before the second attempt |
+| `backoff` | `2` | What each wait is multiplied by |
+| `maxDelay` | `30000` | The longest any single wait may be |
+
+With the defaults the waits are **1 s, 2 s, 4 s, 8 s…** Each one is longer than the last
+on purpose: a server having a bad minute stays down for a moment, and a crowd of browsers
+hammering it at a fixed interval is how one bad minute becomes several.
+
+While it waits, the status line says so — "Upload failed — trying again (2 of 3)", in the
+widget's language — and **Cancel cuts the wait short**. A cancel that appeared to be ignored
+for the length of a 30-second backoff would be worse than no retry at all.
+
+### The button, and doing it yourself
+
+A **Retry** button appears beside Upload once something has failed for a reason worth
+repeating, and goes away again when there is nothing to repeat. A button that is always
+there but usually pointless teaches people to ignore it.
+
+The same thing from code:
+
+```js
+if (drop.retryable) await drop.retry();
+```
+
+`retry()` re-queues only what is worth repeating and sends it; with nothing to repeat it
+returns `null` and makes no request.
+
+### Watching it happen
+
+```js
+drop.on('retry', ({ attempt, of, delay, code }) =>
+  console.log(`attempt ${attempt} of ${of} in ${delay} ms, after ${code}`));
+```
+
+The `error` event fires **once**, after the last attempt — not once per attempt.
+
+### What it does not do
+
+It sends the whole batch again from the beginning. There is no resuming: a 10 MB photograph
+that failed at 90% starts over. Resumable uploads need the server to hold partial files and
+agree on a protocol for them, which is a larger thing than this package is.
+
+---
+
 ## Sessions: who uploaded what
 
 Off by default. The endpoint knows nothing about visitors, every file lands in one
@@ -740,7 +826,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 372 tests
+npm test             # 396 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
@@ -760,6 +846,8 @@ and watched rather than read about:
 | Compress | `off`, `lossless` (metadata only), `auto` (0.85), `0.6`, `0.3` |
 | Resize | `off`, 1920, 1024, 512, 128×128 px |
 | Malware check | Turns screening on at the server |
+| Auto retry | Three attempts with a growing wait, instead of one |
+| Break the next upload | Answers the next upload 503 once, so a retry can be watched |
 | Upload history | Removes the history panel — it belongs to the page, not the widget |
 
 The history reports both sizes, so the saving is visible immediately:

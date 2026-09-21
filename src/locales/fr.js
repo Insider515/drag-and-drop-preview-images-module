@@ -32,6 +32,7 @@ export default {
     'status.uploaded': 'Envoyé',
     'status.failed': 'Échec',
     'status.cancelled': 'Envoi annulé',
+    'status.retrying': 'Échec — nouvelle tentative ({attempt} sur {total})',
     'status.someFailed': '{done} envoyés, {failed} en échec',
     'error.EMPTY': 'Le fichier est vide',
     'error.TOO_LARGE': 'Plus grand que {limit}',

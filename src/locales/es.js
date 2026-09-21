@@ -32,6 +32,7 @@ export default {
     'status.uploaded': 'Subido',
     'status.failed': 'No se pudo',
     'status.cancelled': 'Subida cancelada',
+    'status.retrying': 'Falló — reintentando ({attempt} de {total})',
     'status.someFailed': 'Subidos {done}, con error {failed}',
     'error.EMPTY': 'El archivo está vacío',
     'error.TOO_LARGE': 'Mayor que {limit}',

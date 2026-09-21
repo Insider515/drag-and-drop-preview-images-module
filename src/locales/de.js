@@ -32,6 +32,7 @@ export default {
     'status.uploaded': 'Hochgeladen',
     'status.failed': 'Fehlgeschlagen',
     'status.cancelled': 'Upload abgebrochen',
+    'status.retrying': 'Fehlgeschlagen — neuer Versuch ({attempt} von {total})',
     'status.someFailed': '{done} hochgeladen, {failed} fehlgeschlagen',
     'error.EMPTY': 'Die Datei ist leer',
     'error.TOO_LARGE': 'Größer als {limit}',

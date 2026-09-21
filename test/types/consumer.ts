@@ -185,3 +185,18 @@ new DropPreview('#images', { compress: thumbnails });
 new DropPreview('#images', { compress: { quality: 'lossless' } });
 new DropPreview('#images', { compress: { maxWidth: 1920, quality: 0.8, format: 'image/webp' } });
 new DropPreview('#images', {}); // compression is optional
+
+// --- retry ----------------------------------------------------------------
+import type { RetryOptions } from '../../types/index.js';
+
+const flakyNetwork: RetryOptions = { attempts: 4, delay: 500, backoff: 2, maxDelay: 10_000 };
+
+const withRetry = new DropPreview('#images', { endpoint: '/upload', retry: flakyNetwork });
+new DropPreview('#images', { endpoint: '/upload' }); // retries are optional
+
+withRetry.on('retry', ({ attempt, of, delay, code }) =>
+  console.log(`attempt ${attempt} of ${of} in ${delay}ms after ${code}`));
+
+async function tryAgain() {
+  if (withRetry.retryable) await withRetry.retry();
+}

@@ -32,6 +32,7 @@ export default {
     'status.uploaded': 'Завантажено',
     'status.failed': 'Не вдалося',
     'status.cancelled': 'Завантаження скасовано',
+    'status.retrying': 'Не вдалося — пробуємо ще раз ({attempt} з {total})',
     'status.someFailed': 'Завантажено {done}, не вдалося {failed}',
     'error.EMPTY': 'Файл порожній',
     'error.TOO_LARGE': 'Більший за {limit}',

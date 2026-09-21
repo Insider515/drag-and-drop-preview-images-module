@@ -33,6 +33,9 @@ export { formatBytes } from './core/format.js';
 export { AUTO_QUALITY, compressFile, normaliseCompress, targetSize } from './core/compress.js';
 export { readExifOrientation, stripMetadata } from './core/metadata.js';
 
+// Sending a failed upload again. Off unless the `retry` option is set.
+export { delayBefore, isRetryable, normaliseRetry } from './core/retry.js';
+
 /**
  * Convenience factory.
  *

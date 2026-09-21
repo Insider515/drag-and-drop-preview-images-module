@@ -25,6 +25,7 @@ let palette = false;
 let allowSvg = false;
 let quality = 'off';
 let maxSize = 0;
+let autoRetry = false;
 let drop = mount();
 
 const BRAND = {
@@ -60,6 +61,7 @@ function mount() {
     allowSvg,
     theme: palette ? BRAND : null,
     compress: compressOption(),
+    retry: autoRetry ? { attempts: 3, delay: 800 } : null,
     limits: { maxFiles: 12, maxFileSize: 8 * 1024 * 1024 },
   });
 
@@ -76,6 +78,8 @@ function mount() {
     }
   });
   instance.on('warning', ({ code, error }) => say(`warning: ${code} — ${error?.message ?? ''}`));
+  instance.on('retry', ({ attempt, of, delay, code }) =>
+    say(`retry: ${code} — attempt ${attempt} of ${of}, in ${delay} ms`));
   instance.on('rejected', ({ rejected }) => {
     for (const item of rejected) {
       say(`rejected: ${item.file.name} — ${item.code} — ${instance.describeError(item.code, item.detail)}`);
@@ -170,6 +174,32 @@ scanButton.addEventListener('click', async () => {
   } finally {
     scanButton.textContent = `Malware check: ${screening ? 'on' : 'off'}`;
     scanButton.disabled = false;
+  }
+});
+
+const retryButton = document.getElementById('retry');
+retryButton.addEventListener('click', () => {
+  autoRetry = !autoRetry;
+  retryButton.textContent = `Auto retry: ${autoRetry ? 'on (3 attempts)' : 'off'}`;
+  remount();
+});
+
+// Failing one upload on purpose, so a retry can be watched rather than
+// described. The dev server answers the next upload with 503 and then forgets
+// about it — which is a failure worth repeating, unlike a 404, which the
+// widget deliberately does not repeat.
+const breakButton = document.getElementById('breaknet');
+breakButton.addEventListener('click', async () => {
+  breakButton.disabled = true;
+  try {
+    const response = await fetch('/api/demo/fail?on=1', { method: 'POST' });
+    const { failNext } = await response.json();
+    breakButton.textContent = `Break the next upload: ${failNext ? 'armed (503)' : 'off'}`;
+    say(`next upload will answer 503 once — ${autoRetry ? 'auto retry will pick it up' : 'use the Retry button'}`);
+  } catch (err) {
+    say(`could not arm the failure — ${err.message}`);
+  } finally {
+    breakButton.disabled = false;
   }
 });
 

@@ -1,5 +1,6 @@
 import { compressFile, normaliseCompress } from './core/compress.js';
 import { createTranslator, resolveLocale } from './core/i18n.js';
+import { delayBefore, isRetryable, normaliseRetry } from './core/retry.js';
 import { DEFAULT_LOCALE, LOCALES } from './locales/index.js';
 import { buildThemeCss } from './core/theme.js';
 import { formatBytes } from './core/format.js';
@@ -43,6 +44,12 @@ export const DEFAULTS = {
    * src/core/compress.js for what each setting does.
    */
   compress: null,
+
+  /**
+   * Send a failed upload again by itself. Off unless set; only failures that
+   * are about the connection rather than about the file are repeated.
+   */
+  retry: null,
 
   /** Upload as soon as files are chosen, rather than on a button. */
   autoUpload: false,
@@ -98,6 +105,7 @@ export class DropPreview {
     // Validated here rather than at upload time, so a typo in the options is a
     // mistake the developer meets immediately.
     this.compress = normaliseCompress(this.options.compress);
+    this.retryPolicy = normaliseRetry(this.options.retry);
     this.host = host;
 
     this.locale = resolveLocale(this.options.locale, LOCALES, DEFAULT_LOCALE);
@@ -198,7 +206,16 @@ export class DropPreview {
         hidden: true,
         on: { click: () => this.cancel() },
       });
-      this.actions.append(this.uploadButton, this.cancelButton);
+      // Shown only when something failed for a reason worth repeating. A
+      // button that is always there but usually pointless teaches people to
+      // ignore it.
+      this.retryButton = el('button.ddp-btn', {
+        type: 'button',
+        text: this.t('common.retry'),
+        hidden: true,
+        on: { click: () => this.retry() },
+      });
+      this.actions.append(this.uploadButton, this.retryButton, this.cancelButton);
     }
   }
 
@@ -493,6 +510,34 @@ export class DropPreview {
     this.#render();
 
     try {
+      for (let attempt = 1; ; attempt += 1) {
+        const outcome = await this.#attempt(sending, attempt);
+        if (outcome.done) return outcome.answer;
+        // Between attempts the files go back to waiting, so the tiles do not
+        // sit in a failed state during a wait that is about to undo it.
+        for (const item of sending) {
+          item.status = 'uploading';
+          item.error = null;
+        }
+        this.#render();
+      }
+    } finally {
+      // Reached however the loop ends — answered, refused, or cancelled.
+      this.#busy = false;
+      this.#controller = null;
+      this.#setUploading(false);
+      this.#setProgress(0, 0);
+    }
+  }
+
+  /**
+   * One attempt at sending the batch.
+   *
+   * @returns {Promise<{done: boolean, answer: object|null}>} `done` is false
+   *   only when the failure is worth repeating and there are attempts left.
+   */
+  async #attempt(sending, attempt) {
+    try {
       const answer = await uploadFiles({
         endpoint: this.options.endpoint,
         items: sending,
@@ -516,7 +561,7 @@ export class DropPreview {
       }
       this.#render();
       this.emit('uploaded', { answer, files: this.files });
-      return answer;
+      return { done: true, answer };
     } catch (err) {
       const code = err instanceof UploadError ? err.code : 'INTERNAL';
       // Cancelling is the user's own decision, not something wrong with the
@@ -539,14 +584,81 @@ export class DropPreview {
             : { code, detail: err instanceof UploadError ? err.params : null };
       }
       this.#render();
+
+      const status = err instanceof UploadError ? err.status : 0;
+      const again = !cancelled
+        && this.retryPolicy
+        && attempt < this.retryPolicy.attempts
+        && isRetryable(code, status);
+
+      if (again) {
+        const delay = delayBefore(this.retryPolicy, attempt + 1);
+        this.emit('retry', { attempt: attempt + 1, of: this.retryPolicy.attempts, delay, code });
+        this.status.textContent = this.t('status.retrying', {
+          attempt: attempt + 1,
+          total: this.retryPolicy.attempts,
+        });
+        // Cancelling during the wait has to cut it short, or the button looks
+        // ignored for as long as the backoff lasts.
+        if (await this.#wait(delay)) return { done: false, answer: null };
+      }
+
       this.emit('error', { error: err, code, message: this.describeError(code, err) });
-      return null;
-    } finally {
-      this.#busy = false;
-      this.#controller = null;
-      this.#setUploading(false);
-      this.#setProgress(0, 0);
+      return { done: true, answer: null };
     }
+  }
+
+  /**
+   * Wait, unless the upload is cancelled first.
+   *
+   * @returns {Promise<boolean>} true when the wait finished on its own
+   */
+  #wait(ms) {
+    return new Promise((resolve) => {
+      const signal = this.#controller?.signal;
+      if (signal?.aborted) {
+        resolve(false);
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', stop);
+        resolve(true);
+      }, ms);
+      const stop = () => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+      signal?.addEventListener('abort', stop, { once: true });
+    });
+  }
+
+  /**
+   * Send again what failed for a reason worth repeating.
+   *
+   * Files refused for what they are — too large, not an image, reported as
+   * malware — are left alone: another attempt produces the same answer.
+   *
+   * @returns {Promise<object|null>} the server's answer, or null
+   */
+  async retry() {
+    const again = this.#items.filter(
+      (item) => item.status === 'error' && isRetryable(item.error?.code, item.error?.status ?? 0)
+    );
+    if (again.length === 0 || this.#busy) return null;
+
+    for (const item of again) {
+      item.status = 'ready';
+      item.error = null;
+    }
+    this.#render();
+    return this.upload();
+  }
+
+  /** Whether anything in the queue failed for a reason worth repeating. */
+  get retryable() {
+    return this.#items.some(
+      (item) => item.status === 'error' && isRetryable(item.error?.code, item.error?.status ?? 0)
+    );
   }
 
   /** Stop an upload in flight. */
@@ -558,6 +670,10 @@ export class DropPreview {
     this.root.classList.toggle('is-uploading', active);
     if (this.uploadButton) this.uploadButton.hidden = active;
     if (this.cancelButton) this.cancelButton.hidden = !active;
+    // Decided here as well as in #render, because the render that follows a
+    // failure runs while the upload is still marked busy — and would hide the
+    // button at exactly the moment it becomes useful.
+    if (this.retryButton) this.retryButton.hidden = active || !this.retryable;
     if (this.clearButton) this.clearButton.disabled = active;
     this.input.disabled = active;
     this.progress.hidden = !active;
@@ -594,6 +710,7 @@ export class DropPreview {
 
     if (this.clearButton) this.clearButton.disabled = count === 0 || this.#busy;
     if (this.uploadButton) this.uploadButton.disabled = count === 0;
+    if (this.retryButton) this.retryButton.hidden = this.#busy || !this.retryable;
     this.root.classList.toggle('is-empty', count === 0);
   }
 
