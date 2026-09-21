@@ -125,6 +125,7 @@ app.listen(3000);
 | --- | --- |
 | Previews | Thumbnails drawn from the files themselves, with name and size |
 | Selective removal | Each tile has its own remove button; "Remove all" clears the queue |
+| Reordering | Drag, hold-and-drag on a touch screen, or Alt+arrow from the keyboard |
 | Drag & drop | Onto the zone, with the highlight surviving the pointer crossing child elements |
 | Paste | Ctrl+V a screenshot into the widget, or the whole page |
 | Camera | A Take a photo button on a phone, without giving up the gallery |
@@ -212,6 +213,60 @@ hidden while the queue is empty — which is exactly when somebody wants to take
 
 ---
 
+## Putting the queue in order
+
+On by default. The order files go up in is otherwise an accident of how the operating
+system sorted a dialog, and for a gallery or a set of product photographs that order is the
+whole point.
+
+```js
+new DropPreview('#images', {
+  reorder: true,      // the default
+});
+```
+
+Three ways to move a tile:
+
+| | |
+|---|---|
+| **Mouse** | Drag it anywhere on the tile |
+| **Finger** | Hold the grip in its corner, then drag |
+| **Keyboard** | Focus a tile and press **Alt** with an arrow |
+
+**Why a finger needs the grip.** Until a drag has begun the browser reads a moving touch as
+a scroll, and cancels the pointer the moment it decides so. The only way to stop that is
+`touch-action: none`, and putting it on the whole tile would make a screen full of
+thumbnails impossible to scroll past. So one small corner takes it, and the rest of the
+tile stays scrollable. A mouse has nothing to scroll away from, so it can start anywhere.
+
+**Alt and an arrow, not a bare arrow.** On a focused item a bare arrow is expected to move
+the focus rather than the thing under it. The tiles carry `aria-keyshortcuts`, and focus
+follows the tile it moved — otherwise the next press moves a different file, which is how a
+person loses their place.
+
+### From code
+
+```js
+drop.move(fileId, 2);   // put this file third
+```
+
+The index is **where it ends up**, counted in the queue as it will be afterwards. Counting
+in the old queue is what produces the off-by-one when a file moves forwards. It returns
+`false` when there was nothing to do, and an index past either end lands at that end.
+
+```js
+drop.on('reorder', ({ id, from, to, files }) => save(files.map((f) => f.name)));
+```
+
+The hidden input is rewritten with every move, so a form submitted the ordinary way carries
+the order on screen. A page that shows one order and sends another is worse than no
+reordering at all.
+
+`reorder: false` removes the grips, the drag handling and the key handling. `move()` still
+works, for a host that wants to drive the order from its own interface.
+
+---
+
 ## Widget options
 
 ```js
@@ -233,6 +288,7 @@ new DropPreview(target, {
   showUploadButton: true,
   showClearButton: true,
 
+  reorder: true,          // drag a tile, or Alt+arrow on a focused one
   paste: true,            // Ctrl+V; 'document' listens on the whole page
   camera: 'auto',         // a Take a photo button where the pointer is coarse
   capture: 'environment', // which camera it opens
@@ -986,7 +1042,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 472 tests
+npm test             # 500 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
@@ -1007,6 +1063,7 @@ and watched rather than read about:
 | Resize | `off`, 1920, 1024, 512, 128×128 px |
 | Malware check | Turns screening on at the server |
 | Auto retry | Three attempts with a growing wait, instead of one |
+| Reorder | Drag the tiles, or turn it off |
 | Paste | Inside the widget, anywhere on the page, or off |
 | Camera button | Forces the button on, so it can be seen on a desktop |
 | Break the next upload | Answers the next upload 503 once, so a retry can be watched |

@@ -238,6 +238,55 @@
  * The bar over one thumbnail. Only while that file is actually going out:
  * a bar sitting at nothing under every tile is furniture, not information.
  */
+/*
+ * Reordering. `touch-action` is set on the tiles rather than on the list so a
+ * finger can still scroll the page from the gaps between them, and it only
+ * matters once a drag has begun.
+ */
+/*
+ * The one place a finger may start a drag. Everywhere else on a tile stays
+ * scrollable, which on a screen full of thumbnails is the difference between
+ * a queue you can read and one you cannot.
+ */
+.ddp-grip {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ddp-text-muted);
+  cursor: grab;
+  background: var(--ddp-bg);
+  border-radius: var(--ddp-radius);
+  opacity: 0.85;
+  touch-action: none;
+}
+
+.ddp-grip:active {
+  cursor: grabbing;
+}
+
+.ddp-previews.is-reordering {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.ddp-previews.is-reordering .ddp-tile {
+  touch-action: none;
+}
+
+.ddp-tile.is-dragging {
+  opacity: 0.6;
+  outline: 2px solid var(--ddp-accent);
+  outline-offset: 2px;
+}
+
+.ddp-tile[tabindex]:focus-visible {
+  outline: 2px solid var(--ddp-accent);
+  outline-offset: 2px;
+}
+
 .ddp-tile-progress {
   position: absolute;
   right: 0;

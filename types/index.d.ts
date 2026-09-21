@@ -277,6 +277,11 @@ export interface DropPreviewOptions {
    * Accept a picture pasted with Ctrl+V. `true` (the default) listens on the
    * widget, `'document'` on the whole page, `false` not at all.
    */
+  /**
+   * Let the person put the queue in the order they want: drag a tile, or
+   * focus one and press Alt with an arrow. On by default.
+   */
+  reorder?: boolean;
   paste?: boolean | 'document';
   /**
    * Offer a "Take a photo" button. `'auto'` (the default) shows it where the
@@ -298,6 +303,8 @@ export interface DropPreviewEvents {
   error: { error: unknown; code: string; message: string };
   /** An upload is about to be sent again after a failure worth repeating. */
   retry: { attempt: number; of: number; delay: number; code: string };
+  /** A file was moved to a different place in the queue. */
+  reorder: { id: string; from: number; to: number; files: QueuedFile[] };
   /**
    * Something optional did not work, and the widget carried on without it —
    * a picture that could not be shrunk is sent as it came, not lost.
@@ -328,6 +335,11 @@ export declare class DropPreview {
   clear(): void;
   upload(): Promise<unknown | null>;
   cancel(): void;
+  /**
+   * Put one file somewhere else in the queue. The index is where it ends up,
+   * counted in the queue as it will be afterwards.
+   */
+  move(id: string, to: number): boolean;
   /**
    * Send again what failed for a reason worth repeating. Files refused for
    * what they are — too large, not an image, reported as malware — are left

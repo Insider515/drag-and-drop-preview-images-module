@@ -71,6 +71,15 @@ export const DEFAULTS = {
   showClearButton: true,
 
   /**
+   * Let the person put the queue in the order they want.
+   *
+   * On, because the order files go up in is otherwise an accident of how the
+   * operating system sorted a dialog, and for a gallery or a set of product
+   * photographs that order is the whole point.
+   */
+  reorder: true,
+
+  /**
    * Accept a picture pasted with Ctrl+V.
    *
    * `true` listens on the widget itself, so a paste goes to the widget the
@@ -147,6 +156,9 @@ export class DropPreview {
     // mistake the developer meets immediately.
     this.compress = normaliseCompress(this.options.compress);
     this.retryPolicy = normaliseRetry(this.options.retry);
+    if (typeof this.options.reorder !== 'boolean') {
+      throw new Error('reorder must be true or false');
+    }
     if (![true, false, 'document'].includes(this.options.paste)) {
       throw new Error("paste must be true, false, or 'document'");
     }
@@ -262,6 +274,7 @@ export class DropPreview {
     this.#buildActions();
     this.#wireDrag();
     this.#wirePaste();
+    this.#wireReorder();
 
     this.host.append(this.root);
     this.#render();
@@ -559,6 +572,156 @@ export class DropPreview {
     }
   }
 
+  /**
+   * Dragging a tile to somewhere else in the queue.
+   *
+   * Pointer events rather than HTML5 drag-and-drop, because that one does not
+   * exist on a touch screen — and a phone is where a queue most often needs
+   * putting in order, since that is where the pictures were taken.
+   *
+   * The pointer is captured on the list rather than on the tile: reordering
+   * redraws the tiles, and a capture on an element that has just been replaced
+   * stops delivering events halfway through the gesture.
+   */
+  #wireReorder() {
+    if (!this.options.reorder) return;
+
+    let dragging = null;   // the id being moved
+    let startX = 0;
+    let startY = 0;
+    let armed = null;      // a candidate, before the gesture has said it is one
+    let holdTimer = null;
+
+    const TOUCH_HOLD = 300;   // ms before a finger means "move this"
+    const THRESHOLD = 6;      // px before a mouse does
+
+    const stop = () => {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      armed = null;
+      if (dragging) {
+        this.#tiles.get(dragging)?.classList.remove('is-dragging');
+        this.previews.classList.remove('is-reordering');
+        dragging = null;
+      }
+    };
+
+    const begin = (id) => {
+      dragging = id;
+      armed = null;
+      this.#tiles.get(id)?.classList.add('is-dragging');
+      this.previews.classList.add('is-reordering');
+    };
+
+    this.previews.addEventListener('pointerdown', (event) => {
+      if (this.#busy || event.button > 0) return;
+      // The remove button is a button; a press on it is not a drag.
+      const tile = this.#tileFromEvent(event);
+      if (!tile) return;
+
+      armed = tile.id;
+      startX = event.clientX ?? 0;
+      startY = event.clientY ?? 0;
+      this.previews.setPointerCapture?.(event.pointerId);
+
+      // A finger that stays put means "pick this up"; one that moves straight
+      // away means "scroll the page", and taking that over would make the
+      // queue impossible to scroll past.
+      if (event.pointerType === 'touch') {
+        holdTimer = setTimeout(() => {
+          if (armed) begin(armed);
+        }, TOUCH_HOLD);
+      }
+    });
+
+    this.previews.addEventListener('pointermove', (event) => {
+      if (armed && !dragging && event.pointerType !== 'touch') {
+        const far = Math.abs((event.clientX ?? 0) - startX) + Math.abs((event.clientY ?? 0) - startY);
+        if (far > THRESHOLD) begin(armed);
+      }
+      if (!dragging) {
+        // Moving before the hold has finished means this was a scroll.
+        if (armed && holdTimer) {
+          const far = Math.abs((event.clientX ?? 0) - startX) + Math.abs((event.clientY ?? 0) - startY);
+          if (far > THRESHOLD) stop();
+        }
+        return;
+      }
+
+      event.preventDefault?.();
+      const over = this.#tileFromPoint(event.clientX, event.clientY);
+      if (!over || over.id === dragging) return;
+      const to = this.#items.findIndex((item) => item.id === over.id);
+      if (to !== -1) {
+        const id = dragging;
+        this.move(id, to);
+        // The redraw replaced the element, so the class goes on the new one.
+        this.#tiles.get(id)?.classList.add('is-dragging');
+        this.previews.classList.add('is-reordering');
+      }
+    });
+
+    for (const kind of ['pointerup', 'pointercancel', 'pointerleave']) {
+      this.previews.addEventListener(kind, stop);
+    }
+  }
+
+  /** The tile a pointer event started on, if it was not on a control. */
+  #tileFromEvent(event) {
+    let node = event.target;
+    let onGrip = false;
+    while (node && node !== this.previews) {
+      if (node.classList?.contains('ddp-remove')) return null;
+      if (node.classList?.contains('ddp-grip')) onGrip = true;
+      if (node.classList?.contains('ddp-tile')) {
+        // A mouse can start anywhere on the tile: there is nothing to scroll
+        // away from. A finger has to start on the grip, or the queue could
+        // not be scrolled at all.
+        if (event.pointerType === 'touch' && !onGrip) return null;
+        const id = [...this.#tiles].find(([, tile]) => tile === node)?.[0];
+        return id ? { id, tile: node } : null;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  /** The tile under a point on the screen. */
+  #tileFromPoint(x, y) {
+    let node = document.elementFromPoint?.(x, y);
+    while (node && node !== this.previews) {
+      if (node.classList?.contains('ddp-tile')) {
+        const id = [...this.#tiles].find(([, tile]) => tile === node)?.[0];
+        return id ? { id, tile: node } : null;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  /**
+   * Moving a tile without a pointer at all.
+   *
+   * Alt and an arrow, rather than a bare arrow: a bare one on a focused item
+   * is expected to move the focus, not the thing under it.
+   */
+  #onTileKey(event, id) {
+    if (!this.options.reorder || this.#busy) return;
+    if (!event.altKey) return;
+    const back = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+    if (!back && !forward) return;
+
+    const at = this.#items.findIndex((item) => item.id === id);
+    if (at === -1) return;
+    event.preventDefault?.();
+    if (this.move(id, at + (back ? -1 : 1))) {
+      // Focus follows the tile, or the next key press would move a different
+      // one — which is how a person loses their place entirely.
+      this.#tiles.get(id)?.focus?.();
+    }
+  }
+
   #releaseUrl(url) {
     if (!url) return;
     URL.revokeObjectURL(url);
@@ -574,6 +737,37 @@ export class DropPreview {
     this.#releaseUrl(item.url);
     this.#syncInput();
     this.#render();
+    this.emit('change', { files: this.files });
+    return true;
+  }
+
+  /**
+   * Put one file somewhere else in the queue.
+   *
+   * The index is where the file ends up, counted in the queue as it will be
+   * afterwards — which is what "move this to third place" means to a person,
+   * and avoids the off-by-one that counting in the old queue produces when
+   * moving something forwards.
+   *
+   * @param {string} id the file to move
+   * @param {number} to its new position, from 0
+   * @returns {boolean} false when there was nothing to do
+   */
+  move(id, to) {
+    const from = this.#items.findIndex((item) => item.id === id);
+    if (from === -1) return false;
+
+    const target = Math.max(0, Math.min(this.#items.length - 1, Math.trunc(to)));
+    if (target === from) return false;
+
+    const [moved] = this.#items.splice(from, 1);
+    this.#items.splice(target, 0, moved);
+
+    // The hidden input is what a plain form submit carries, so the order has
+    // to reach it too — otherwise the page shows one order and sends another.
+    this.#syncInput();
+    this.#render();
+    this.emit('reorder', { id, from, to: target, files: this.files });
     this.emit('change', { files: this.files });
     return true;
   }
@@ -974,6 +1168,13 @@ export class DropPreview {
       role: 'listitem',
       dataset: { status: item.status },
       title: item.file.name,
+      ...(this.options.reorder
+        ? {
+            tabindex: '0',
+            'aria-keyshortcuts': 'Alt+ArrowLeft Alt+ArrowRight',
+            on: { keydown: (event) => this.#onTileKey(event, item.id) },
+          }
+        : {}),
     }, [
       // Its own bar, over the thumbnail. The one below the zone measures the
       // whole queue; this says how far this particular file has got, which is
@@ -982,6 +1183,14 @@ export class DropPreview {
       el('div.ddp-thumb-wrap', {}, [
         thumb,
         remove,
+        // A finger needs somewhere to press that is not also somewhere to
+        // scroll from. Until a drag has begun the browser treats a moving
+        // touch as a scroll and cancels the pointer, so the grip is the one
+        // spot with `touch-action: none` — small enough that the rest of the
+        // queue can still be scrolled past.
+        this.options.reorder
+          ? el('span.ddp-grip', { 'aria-hidden': 'true', text: '\u283F' })
+          : null,
         el('div.ddp-tile-progress', {}, [
           el('div.ddp-tile-progress-bar', { style: { width: `${Math.round((item.progress ?? 0) * 100)}%` } }),
         ]),

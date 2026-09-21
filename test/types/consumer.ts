@@ -220,3 +220,10 @@ watched.on('change', ({ files }) => {
     console.log(`${file.name}: ${percent}%, saved ${saved} bytes`);
   }
 });
+
+// --- reordering -----------------------------------------------------------
+const sortable = new DropPreview('#images', { reorder: true });
+new DropPreview('#images', { reorder: false });
+sortable.on('reorder', ({ id, from, to, files }) =>
+  console.log(`${id} moved from ${from} to ${to}, now ${files.length} files`));
+const moved: boolean = sortable.move('some-id', 0);

@@ -26,6 +26,7 @@ let allowSvg = false;
 let quality = 'off';
 let maxSize = 0;
 let autoRetry = false;
+let reorder = true;
 let pasteMode = true;
 let cameraMode = 'auto';
 let drop = mount();
@@ -64,6 +65,7 @@ function mount() {
     theme: palette ? BRAND : null,
     compress: compressOption(),
     retry: autoRetry ? { attempts: 3, delay: 800 } : null,
+    reorder,
     paste: pasteMode,
     camera: cameraMode,
     limits: { maxFiles: 12, maxFileSize: 8 * 1024 * 1024 },
@@ -81,6 +83,7 @@ function mount() {
       }
     }
   });
+  instance.on('reorder', ({ from, to }) => say(`reorder: ${from} -> ${to}`));
   instance.on('warning', ({ code, error }) => say(`warning: ${code} — ${error?.message ?? ''}`));
   instance.on('retry', ({ attempt, of, delay, code }) =>
     say(`retry: ${code} — attempt ${attempt} of ${of}, in ${delay} ms`));
@@ -205,6 +208,13 @@ breakButton.addEventListener('click', async () => {
   } finally {
     breakButton.disabled = false;
   }
+});
+
+const reorderButton = document.getElementById('reorder');
+reorderButton.addEventListener('click', () => {
+  reorder = !reorder;
+  reorderButton.textContent = `Reorder: ${reorder ? 'on' : 'off'}`;
+  remount();
 });
 
 const pasteButton = document.getElementById('paste');
