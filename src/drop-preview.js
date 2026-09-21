@@ -51,6 +51,18 @@ export const DEFAULTS = {
    */
   retry: null,
 
+  /**
+   * How many files travel in one request.
+   *
+   * One each, by default, so that what has landed stays landed. Put fifty
+   * photographs in a single request and a connection that drops on the
+   * forty-ninth loses all fifty — and worse, the files the server had already
+   * written stay there, so sending the batch again leaves duplicates of them.
+   * Raise it to trade that safety for fewer round trips, or set 0 to put the
+   * whole queue in one request the way earlier versions did.
+   */
+  filesPerRequest: 1,
+
   /** Upload as soon as files are chosen, rather than on a button. */
   autoUpload: false,
   /** Show the "Upload" button when an endpoint is set. */
@@ -106,6 +118,10 @@ export class DropPreview {
     // mistake the developer meets immediately.
     this.compress = normaliseCompress(this.options.compress);
     this.retryPolicy = normaliseRetry(this.options.retry);
+    const perRequest = this.options.filesPerRequest;
+    if (!Number.isInteger(perRequest) || perRequest < 0) {
+      throw new Error('filesPerRequest must be a whole number, 0 for all at once');
+    }
     this.host = host;
 
     this.locale = resolveLocale(this.options.locale, LOCALES, DEFAULT_LOCALE);
@@ -491,11 +507,14 @@ export class DropPreview {
     this.#controller = new AbortController();
     this.#setUploading(true);
 
-    const sending = this.#items.filter((item) => item.status !== 'error');
-    if (sending.length === 0) {
-      // Every file in the queue already failed. Posting an empty body would
-      // come back as "no files were sent", which is true and useless — the
-      // reason is on the tiles, and it is not the server's.
+    // A file that has already landed is never sent again. That is the whole
+    // point of sending them in separate requests: an interruption costs the
+    // batch that was in flight, not the ones already on the server.
+    const pending = this.#items.filter((item) => item.status !== 'error' && item.status !== 'done');
+    if (pending.length === 0) {
+      // Everything in the queue has either failed or already arrived. Posting
+      // an empty body would come back as "no files were sent", which is true
+      // and useless — the reason is on the tiles, and it is not the server's.
       this.#busy = false;
       this.#controller = null;
       this.#setUploading(false);
@@ -506,27 +525,102 @@ export class DropPreview {
       });
       return null;
     }
-    for (const item of sending) item.status = 'uploading';
-    this.#render();
+
+    const perRequest = this.options.filesPerRequest || pending.length;
+    const groups = [];
+    for (let at = 0; at < pending.length; at += perRequest) {
+      groups.push(pending.slice(at, at + perRequest));
+    }
+
+    const uploaded = [];
+    const failures = [];
+    const totalBytes = pending.reduce((sum, item) => sum + item.file.size, 0);
+    let sentBytes = 0;
+    let stopped = null;
+    let lastError = null;
 
     try {
-      for (let attempt = 1; ; attempt += 1) {
-        const outcome = await this.#attempt(sending, attempt);
-        if (outcome.done) return outcome.answer;
-        // Between attempts the files go back to waiting, so the tiles do not
-        // sit in a failed state during a wait that is about to undo it.
-        for (const item of sending) {
-          item.status = 'uploading';
-          item.error = null;
+      for (const group of groups) {
+        if (this.#controller?.signal.aborted) break;
+        const outcome = await this.#sendGroup(
+          group, sentBytes, totalBytes, uploaded.length + failures.length, pending.length
+        );
+        sentBytes += group.reduce((sum, item) => sum + item.file.size, 0);
+        this.#setProgress(sentBytes, totalBytes);
+
+        if (outcome.answer) {
+          uploaded.push(...(outcome.answer.uploaded ?? []));
+          failures.push(...(outcome.answer.failures ?? []));
+          continue;
         }
-        this.#render();
+
+        failures.push(...group.map((item) => ({
+          name: item.file.name,
+          code: item.error?.code ?? 'INTERNAL',
+          params: item.error?.detail ?? null,
+        })));
+        lastError = outcome.error;
+        // A refusal of these particular files says nothing about the next
+        // ones, so the walk goes on. A connection that has dropped says
+        // everything about them, and carrying on would only waste the
+        // person's time failing the same way another forty times.
+        if (outcome.cancelled || isRetryable(outcome.code, outcome.status)) {
+          stopped = outcome.error;
+          break;
+        }
       }
+
+      const answer = { uploaded, failures };
+      // Cut short, or nothing arrived at all: either way this was a failure,
+      // not a partial success worth announcing as one.
+      const failure = stopped ?? (uploaded.length === 0 && failures.length ? lastError : null);
+      if (failure) {
+        const code = failure instanceof UploadError ? failure.code : 'INTERNAL';
+        this.emit('error', { error: failure, code, message: this.describeError(code, failure) });
+        return null;
+      }
+      this.emit('uploaded', { answer, files: this.files });
+      return answer;
     } finally {
-      // Reached however the loop ends — answered, refused, or cancelled.
+      // Reached however the walk ends — answered, refused, or cancelled.
       this.#busy = false;
       this.#controller = null;
       this.#setUploading(false);
       this.#setProgress(0, 0);
+      this.#render();
+    }
+  }
+
+  /** "Uploading 3 of 20", while there is more than one request to make. */
+  #showProgressText(done, total) {
+    if (total > 1) {
+      this.status.textContent = this.t('status.uploading', { done: done + 1, total });
+    }
+  }
+
+  /**
+   * One group of files, with whatever retries the host asked for.
+   *
+   * @returns {Promise<{answer: object|null, error: unknown, code: string, status: number, cancelled: boolean}>}
+   */
+  async #sendGroup(group, sentBefore, totalBytes, doneSoFar, queued) {
+    for (const item of group) {
+      item.status = 'uploading';
+      item.error = null;
+    }
+    this.#render();
+    // After the render, which writes the queue summary over whatever the
+    // status line was saying.
+    this.#showProgressText(doneSoFar, queued);
+
+    for (let attempt = 1; ; attempt += 1) {
+      const outcome = await this.#attempt(group, attempt, sentBefore, totalBytes);
+      if (outcome.done) return outcome;
+      for (const item of group) {
+        item.status = 'uploading';
+        item.error = null;
+      }
+      this.#render();
     }
   }
 
@@ -536,7 +630,8 @@ export class DropPreview {
    * @returns {Promise<{done: boolean, answer: object|null}>} `done` is false
    *   only when the failure is worth repeating and there are attempts left.
    */
-  async #attempt(sending, attempt) {
+  async #attempt(sending, attempt, sentBefore = 0, totalBytes = 0) {
+    const groupBytes = sending.reduce((sum, item) => sum + item.file.size, 0);
     try {
       const answer = await uploadFiles({
         endpoint: this.options.endpoint,
@@ -546,7 +641,11 @@ export class DropPreview {
         credentials: this.options.credentials,
         fields: this.options.fields,
         signal: this.#controller.signal,
-        onProgress: (sent, total) => this.#setProgress(sent, total),
+        // The bar measures the whole queue, not the request in flight: with a
+        // file per request it would otherwise jump back to nothing on each one.
+        onProgress: (sent, total) => (totalBytes
+          ? this.#setProgress(sentBefore + (total ? (sent / total) * groupBytes : 0), totalBytes)
+          : this.#setProgress(sent, total)),
       });
 
       // The server decides what actually landed; a file it refused is marked
@@ -560,8 +659,7 @@ export class DropPreview {
         item.error = failure ? { code: failure.code ?? 'INTERNAL', detail: failure.params ?? null } : null;
       }
       this.#render();
-      this.emit('uploaded', { answer, files: this.files });
-      return { done: true, answer };
+      return { done: true, answer, error: null, code: null, status: 0, cancelled: false };
     } catch (err) {
       const code = err instanceof UploadError ? err.code : 'INTERNAL';
       // Cancelling is the user's own decision, not something wrong with the
@@ -600,11 +698,12 @@ export class DropPreview {
         });
         // Cancelling during the wait has to cut it short, or the button looks
         // ignored for as long as the backoff lasts.
-        if (await this.#wait(delay)) return { done: false, answer: null };
+        if (await this.#wait(delay)) {
+          return { done: false, answer: null, error: err, code, status, cancelled };
+        }
       }
 
-      this.emit('error', { error: err, code, message: this.describeError(code, err) });
-      return { done: true, answer: null };
+      return { done: true, answer: null, error: err, code, status, cancelled };
     }
   }
 

@@ -50,6 +50,8 @@ integration time.
 
 > 🇺🇦 [Ця сторінка українською](README.uk.md)
 
+![The widget in the demo page: language, theme, compression and resize controls above a drop zone, six thumbnails with their sizes below it, and the page's own upload history at the bottom](docs/screenshot.png)
+
 ---
 
 ## Status
@@ -152,6 +154,7 @@ new DropPreview(target, {
   limits: null,           // see below
   compress: null,         // shrink pictures before sending; see below
   retry: null,            // send a failed upload again; see below
+  filesPerRequest: 1,     // files in one request; 0 sends the whole queue at once
 
   autoUpload: false,      // upload as soon as files are chosen
   showUploadButton: true,
@@ -528,6 +531,40 @@ While it waits, the status line says so — "Upload failed — trying again (2 o
 widget's language — and **Cancel cuts the wait short**. A cancel that appeared to be ignored
 for the length of a 30-second backoff would be worse than no retry at all.
 
+### A mass upload survives an interruption
+
+Files travel **one per request**, so what has landed stays landed. Put fifty photographs in
+a single request and a connection that drops on the forty-ninth loses all fifty — and the
+ones the server had already written stay on its disk, so sending the batch again leaves
+duplicates of every one of them. Measured, before this was the default: ten files, the line
+cut after six, retry the batch — fifteen files on the server, five of them duplicates.
+
+Now the same interruption costs the file that was in flight and nothing else:
+
+```
+12 queued, connection cut after 7
+  tiles: 7 done, 1 error, 4 ready
+  server: 7 files
+
+press Retry
+  server: 12 files, no duplicates
+```
+
+A file marked `done` is never sent again — not by Upload, not by Retry, not by anything.
+That is what makes the second attempt cheap.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `filesPerRequest` | `1` | Files in one request. Raise it to trade safety for fewer round trips; `0` puts the whole queue in one request, the way earlier versions did |
+
+**A dropped connection stops the walk.** The remaining files would fail the same way, one
+after another, and watching forty of them do it slowly helps nobody. A *refusal* of one
+file does not stop it: that the third is not an image says nothing about the fourth.
+
+The progress bar measures the whole queue rather than the request in flight — otherwise it
+would snap back to nothing on every file — and the status line counts files, not requests:
+"Uploading 3 of 20".
+
 ### The button, and doing it yourself
 
 A **Retry** button appears beside Upload once something has failed for a reason worth
@@ -554,9 +591,10 @@ The `error` event fires **once**, after the last attempt — not once per attemp
 
 ### What it does not do
 
-It sends the whole batch again from the beginning. There is no resuming: a 10 MB photograph
-that failed at 90% starts over. Resumable uploads need the server to hold partial files and
-agree on a protocol for them, which is a larger thing than this package is.
+It resumes between files, not inside one. A 10 MB photograph that failed at 90% starts
+over — only that photograph, not the twenty around it. Resuming inside a file needs the
+server to hold partial uploads and agree on a protocol for them, which is a larger thing
+than this package is.
 
 ---
 
@@ -839,7 +877,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 423 tests
+npm test             # 436 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

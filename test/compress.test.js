@@ -10,7 +10,9 @@ before(() => { dom = installDom(); });
 after(uninstallDom);
 beforeEach(() => dom.reset());
 
-const mount = (options) => new DropPreview(dom.root, options);
+// These cases describe one request carrying the whole batch, which is what
+// `filesPerRequest: 0` asks for. The per-file default has its own file.
+const mount = (options) => new DropPreview(dom.root, { filesPerRequest: 0, ...options });
 const caption = (drop, i = 0) =>
   drop.root.querySelectorAll('.ddp-size')[i]?.textContent;
 

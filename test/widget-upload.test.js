@@ -9,7 +9,10 @@ before(() => { dom = installDom(); });
 after(uninstallDom);
 beforeEach(() => dom.reset());
 
-const mount = (options) => new DropPreview(dom.root, { endpoint: '/api/upload', ...options });
+// These cases describe one request carrying the whole batch, which is what
+// `filesPerRequest: 0` asks for. The per-file default has its own file.
+const mount = (options) =>
+  new DropPreview(dom.root, { endpoint: '/api/upload', filesPerRequest: 0, ...options });
 const tiles = (drop) => drop.root.querySelectorAll('.ddp-tile');
 const statuses = (drop) => tiles(drop).map((t) => t.dataset.status);
 

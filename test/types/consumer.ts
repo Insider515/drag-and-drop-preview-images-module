@@ -200,3 +200,8 @@ withRetry.on('retry', ({ attempt, of, delay, code }) =>
 async function tryAgain() {
   if (withRetry.retryable) await withRetry.retry();
 }
+
+// --- how many files per request -------------------------------------------
+new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 1 });
+new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 5 });
+new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 0 });

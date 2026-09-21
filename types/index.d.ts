@@ -259,6 +259,12 @@ export interface DropPreviewOptions {
   compress?: CompressOptions;
   /** Off unless set; see {@link RetryOptions}. */
   retry?: RetryOptions;
+  /**
+   * Files in one request. One each by default, so that an interruption costs
+   * the file in flight and not the ones already on the server. `0` puts the
+   * whole queue in a single request.
+   */
+  filesPerRequest?: number;
 
   autoUpload?: boolean;
   showUploadButton?: boolean;
