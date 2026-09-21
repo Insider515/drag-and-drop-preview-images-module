@@ -27,6 +27,18 @@ What it is careful about:
   preflighted, so without an Origin check any page on any site could upload under the
   user's session cookie.
 
+Three larger pieces are there when you want them, and absent when you do not. Each is one
+option block; leave it out and that code never runs:
+
+- **[Shrink pictures before they are sent](#shrinking-pictures-before-they-are-sent)** —
+  resize to a box, re-encode at a quality you choose, or drop metadata without touching a
+  pixel. It happens on the page, so the bytes saved never travel at all.
+- **[File uploads under a session](#sessions-who-uploaded-what)** — a folder per visitor
+  and an owner on every answer, using whatever your application already uses to tell one
+  visitor from another, including anonymous ones.
+- **[Screen uploads for malware](#screening-uploads-for-malware)** — a VirusTotal hash
+  lookup, or your own scanner. Only a hash leaves your server; the file does not.
+
 Size and shape: 13 KB of JS and 2 KB of CSS gzipped on the page, zero runtime
 dependencies. The server half is a single `(req, res)` function that mounts in Express,
 AdonisJS, Fastify, Nest or bare `node:http`, and its only dependency is a multipart
@@ -116,6 +128,9 @@ app.listen(3000);
 | Languages | Five shipped; your own is an object with a dictionary |
 | Themes | Light and dark, following the system or forced; every colour a CSS variable |
 | Two on one page | Nothing is registered globally, so instances do not interfere |
+| Compression | Resize, re-encode, or strip metadata losslessly — on the page, before sending |
+| Sessions | A folder per visitor, and who uploaded what in the answer |
+| Malware screening | A hash lookup, so the file itself never leaves your server |
 
 ---
 
@@ -132,6 +147,7 @@ new DropPreview(target, {
   accept: [],             // MIME types; empty means every image format known
   allowSvg: false,        // SVG is XML that can carry script; opt-in
   limits: null,           // see below
+  compress: null,         // shrink pictures before sending; see below
 
   autoUpload: false,      // upload as soon as files are chosen
   showUploadButton: true,
@@ -349,6 +365,320 @@ const stored = await service.store(filename, readableStream);
 
 ---
 
+## Shrinking pictures before they are sent
+
+Off by default. Turn it on with a `compress` block on the widget:
+
+```js
+new DropPreview('#images', {
+  compress: {
+    maxWidth: 128,
+    maxHeight: 128,
+    quality: 'auto',
+  },
+});
+```
+
+Remove the block and files are queued exactly as they came. All of this happens on the
+page with the canvas the browser already has, so nothing is added to the bundle and the
+bytes saved never travel at all.
+
+### What can honestly be promised, and what cannot
+
+**This is where a dependency-free build runs out of road, so read this before choosing
+settings.**
+
+| | Available here | |
+|---|---|---|
+| Resizing | **yes** | The canvas does it |
+| Lossy re-encoding | **yes** | `toBlob` takes a quality |
+| Dropping metadata | **yes, and exactly** | The picture is copied byte for byte; only EXIF, XMP, IPTC, comments and timestamps are removed |
+| Lossless *recompression* | **no** | Squeezing a JPEG without touching its pixels needs a codec, and a codec is a dependency |
+
+So `quality: 'lossless'` here means **metadata only**. It is not a smaller re-encode, and
+the module will not pretend otherwise: it never touches a canvas on that path, because a
+canvas decodes to pixels and encodes again, which for a JPEG loses a little every time —
+even at quality 1.
+
+Metadata alone is worth more than it sounds. A photograph off a phone routinely carries a
+kilobyte of camera settings and GPS, plus an embedded thumbnail that can run to tens of
+kilobytes. All of it invisible, all of it uploaded, and some of it — where the picture was
+taken — nobody meant to publish.
+
+### `quality: 'auto'` is 0.85
+
+Fifteen percent off the top of the scale, which is what "no more than 15%" can honestly
+mean with nothing to compare against. It is the encoder's dial, not a measured perceptual
+difference — there is no way to measure that here without a codec to measure against.
+
+Set a number yourself if you want something else: `quality: 0.6`.
+
+**It does nothing to a PNG.** PNG has no quality dial; a browser ignores the argument. To
+make a PNG smaller, resize it or convert it:
+
+```js
+compress: { maxWidth: 1600, format: 'image/webp' }   // usually a large saving
+```
+
+### The settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `maxWidth`, `maxHeight` | — | The box to fit inside. Either on its own is enough |
+| `fit` | `'contain'` | `'contain'` fits inside the box, `'cover'` fills it |
+| `quality` | `'auto'` | `'auto'` (0.85), a number, or `'lossless'` (metadata only) |
+| `format` | `'auto'` | `'auto'` keeps the format; or `image/jpeg`, `image/png`, `image/webp` |
+| `stripMetadata` | `true` | Drop EXIF, XMP, IPTC, comments |
+| `skipIfLarger` | `true` | Keep the original when the new file is not actually smaller |
+
+A picture already inside the box is left at its own size — enlarging adds bytes and invents
+detail that was never there.
+
+### Three things it refuses to do
+
+**It will not send you a bigger file.** A PNG straight from an optimiser is usually smaller
+than anything a canvas produces from the same pixels, so the re-encode is measured and
+thrown away if it lost. Turn that off with `skipIfLarger: false` if you would rather have
+the uniform format.
+
+**It will not lay your photographs on their side.** Phone cameras record which way up they
+were held in an EXIF tag, and browsers turn the picture by it. Stripping that tag rotates
+every portrait photo. So on the metadata-only path, EXIF carrying an orientation other than
+"upright" is **kept**; on the re-encode path it is dropped safely, because the canvas has
+already baked the rotation into the pixels.
+
+**It will not lose a file because compressing it failed.** Every failure — a canvas that
+throws, a format the browser cannot encode, a picture that would not decode — ends with
+the original being sent, and a `warning` event you can listen to:
+
+```js
+drop.on('warning', ({ code, error }) => console.warn(code, error));
+```
+
+### What it costs
+
+Compression runs after a file has passed the limits, one picture at a time, using the same
+decoded image the preview already made — nothing is decoded twice, and the decoded copy is
+released as soon as it has been used. Note the order: a file over `maxFileSize` is refused
+**before** anything tries to shrink it. Raise the limit if you want large originals accepted
+and then made small.
+
+The queue reports both sizes, so you can show the saving:
+
+```js
+drop.on('change', ({ files }) => {
+  for (const f of files) console.log(f.name, f.originalSize, '->', f.size);
+});
+```
+
+---
+
+## Sessions: who uploaded what
+
+Off by default. The endpoint knows nothing about visitors, every file lands in one
+directory, and nothing records who put it there.
+
+Turn it on by passing a `sessions` block. Your application already knows how to tell one
+visitor from another — a login, or a cookie an anonymous visitor carries — and that is the
+only part you supply:
+
+```js
+createUploadHandler({
+  root: './uploads',
+  sessions: {
+    identify: (req) => req.session?.id ?? null,
+  },
+});
+```
+
+Now each session gets its own subdirectory, and the answer says which:
+
+```
+uploads/
+  1f3c…a9/photo.png      ← Anna
+  7b2e…04/photo.png      ← Borys, same file name, no collision
+```
+
+```json
+{ "owner": "1f3c…a9",
+  "uploaded": [{ "name": "photo.png", "original": "photo.png", "size": 51234,
+                 "type": "image/png", "owner": "1f3c…a9" }] }
+```
+
+Remove the block and everything goes back to one shared directory. Nothing else changes.
+
+### The three settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `identify(req)` | — | Returns the id. Sync or async. This is the only required part |
+| `scope` | `'directory'` | `'directory'` — a folder per session; `'label'` — one flat folder, ownership only reported |
+| `required` | `true` | No session → 403 `NO_SESSION`. Set `false` to let those fall back to the shared root |
+
+Use `'label'` when you keep files flat and record ownership in your own database:
+
+```js
+sessions: { identify: (req) => req.session.id, scope: 'label' }
+```
+
+The id then never touches the filesystem, so it can be anything — `user/42+ok` is fine.
+
+### What the module checks, and what it will not do for you
+
+With `scope: 'directory'` the id becomes a folder name, and it usually comes from a cookie
+— which is to say from the client. So it is checked exactly as strictly as a file name,
+and it has to be a single usable segment already:
+
+| The hook returns | What happens |
+|---|---|
+| `"1f3ca9"` | `uploads/1f3ca9/` |
+| `"../escape"`, `".."`, `"/etc"`, `"a/b"` | 400 `INVALID_SESSION` |
+| `"CON"`, `"x\0y"`, 300 characters | 400 `INVALID_SESSION` |
+| `null`, `""` | 403 `NO_SESSION`, or the shared root with `required: false` |
+| the hook throws | 500, and the reason is logged through `onWarning`, not sent to the client |
+
+**It is refused, not repaired.** `/etc` is not quietly turned into `etc`, and `a/b` is not
+turned into `b` — that is how two different sessions would end up sharing one folder.
+If your session ids are base64 or otherwise not folder-shaped, hash them yourself:
+
+```js
+identify: (req) => createHash('sha256').update(req.session.id).digest('hex').slice(0, 32),
+```
+
+A session that cannot be established stops the request **before the body is read**, so a
+visitor with nowhere to put files does not get to stream megabytes at your disk first.
+
+### On the page
+
+Nothing to configure: the widget posts to your endpoint with the cookie attached, which is
+what `credentials: 'same-origin'` already does. Two cases need a word:
+
+```js
+// The endpoint is on another origin, and the session lives in a cookie.
+new DropPreview('#images', { endpoint: 'https://api.example.com/upload', credentials: 'include' });
+
+// The session travels as a token rather than a cookie.
+new DropPreview('#images', { endpoint: '/upload', headers: () => ({ Authorization: `Bearer ${token()}` }) });
+```
+
+`headers` takes a function so the token is read at the moment of upload, not at the moment
+the widget was built — which matters for a token that is refreshed.
+
+### Naming files per session
+
+`rename` is told which session it is naming for:
+
+```js
+rename: (name, meta) => `${meta.identity}-${Date.now()}-${name}`,
+```
+
+`meta.identity` is `null` when sessions are off, or when `required: false` let an
+anonymous visitor through.
+
+---
+
+## Screening uploads for malware
+
+Off by default. Turn it on with a `scan` block, using your own API key:
+
+```js
+createUploadHandler({
+  root: './uploads',
+  scan: {
+    service: 'virustotal',
+    apiKey: process.env.VT_API_KEY,
+  },
+});
+```
+
+Remove the block and nothing is screened. No dependency is added either way — the lookup
+uses the `fetch` and the SHA-256 that Node already has.
+
+### Read this before you rely on it
+
+**Only a hash is sent. The file is not.** The check is a lookup of the file's SHA-256, so
+nothing leaves your server that could be turned back into a customer's photograph.
+
+That choice decides what the feature can do, and the limitation is the point:
+
+> It recognises malware that somebody has already reported. It does not examine the file.
+> A sample created this morning is unknown to it.
+
+This is worth having — known samples are most of what actually arrives — and it is **not**
+a substitute for a scanner that reads the bytes. If you need one, pass `check` instead and
+talk to ClamAV over its socket, or to whatever your organisation already runs. Everything
+below applies to your scanner too.
+
+### Where it happens
+
+After the bytes are on disk under a temporary random name, and **before** the file is
+given its real one. A file that is refused never existed under a name anything could
+serve, and its temp copy is deleted. A file refused earlier for another reason — wrong
+type, over the limit — is never sent to the scanner at all, so it costs no round trip.
+
+### The settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `service` | — | `'virustotal'`, the only one built in |
+| `apiKey` | — | Required by that service |
+| `check(file, signal)` | — | Your own scanner instead; gets `{ sha256, name, type, size }` |
+| `onUnknown` | `'accept'` | What to do with a file the database has never seen |
+| `onError` | `'reject'` | What to do when the check itself fails |
+| `timeoutMs` | `5000` | How long one check may take |
+
+**`onUnknown` defaults to `accept`** because almost nothing an ordinary person uploads has
+ever been reported to a malware database. `'reject'` would turn away nearly every real
+photograph.
+
+**`onError` defaults to `reject`** for the opposite reason. If you asked for screening and
+the screening did not happen, accepting anyway means believing you are protected while you
+are not — and nothing on screen would say otherwise. Set `'accept'` if you would rather
+keep uploads working through an outage, knowing what you are trading away.
+
+### The failure you will actually meet
+
+VirusTotal's free tier allows **four lookups a minute**. Past that it answers 429, which
+with the default `onError` means uploads are refused with `SCAN_FAILED` until the minute
+is out. On a public form that is a queue of angry users, so before turning this on in
+anger: check your plan's rate, keep `maxFiles` modest, or put screening behind your own
+queue with `check`.
+
+### What the visitor sees
+
+| Code | HTTP | The message, in the widget's language |
+|---|---|---|
+| `INFECTED` | 422 | The file was reported as malware |
+| `NOT_SCREENED` | 422 | The file could not be checked for malware (only with `onUnknown: 'reject'`) |
+| `SCAN_FAILED` | 503 | The malware check is unavailable, try again |
+
+All three are translated into the five shipped languages. Why the check failed — a bad key,
+a rate limit, a timeout — goes to `onWarning`, never to the client: an API key or the name
+of an internal service is not something to hand a stranger.
+
+### Your own scanner
+
+```js
+scan: {
+  check: async ({ sha256, name, type, size }, signal) => {
+    const response = await fetch('http://scanner.internal/lookup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sha256 }),
+      signal,                       // honour it, or timeoutMs cannot save you
+    });
+    const { infected } = await response.json();
+    return { verdict: infected ? 'malicious' : 'clean' };
+  },
+}
+```
+
+Return `{ verdict }` of `'clean'`, `'malicious'` or `'unknown'`, and optionally `detail`,
+which travels to the client as `params` on the error. Anything else counts as a failure and
+is handled by `onError` — a scanner answering nonsense is never read as clean.
+
+---
+
 ## Security
 
 The theme throughout: **the file's own bytes decide, and the server decides again.**
@@ -390,10 +720,16 @@ is rendered as that text and nothing else.
 
 ### What it does not do
 
-- No authentication and no rate limiting — both belong in front of it.
-- No virus scanning. "It is a real image" is not "it is a safe image".
-- No image processing: nothing is re-encoded, resized or stripped of metadata. EXIF,
-  including GPS coordinates, is stored as it arrived.
+- No authentication, and rate limiting only as a cap on uploads in flight — per-client
+  throttling belongs in front of it.
+- **No malware screening unless you turn it on**, and what you can turn on is a hash
+  lookup: it recognises samples somebody has already reported, and does not examine the
+  file. "It is a real image" is not "it is a safe image".
+- **No image processing unless you turn it on.** Without a `compress` block nothing is
+  re-encoded, resized or stripped, and EXIF — including GPS coordinates — is stored as it
+  arrived.
+- No dimension limit on the server: `maxPixels` guards the preview in the browser, so a
+  request made with curl can store a small file that declares enormous dimensions.
 - `server/standalone.js` is a development server with no authentication. It is not part of
   the npm package.
 
@@ -404,13 +740,40 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 116 tests
+npm test             # 372 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
 ```
 
 Dev server options: `--port`, `--host`, `--root`, `--svg`, `--vite`.
+
+### What you can try in the demo
+
+The demo page is not part of the package; it exists so that every option can be switched on
+and watched rather than read about:
+
+| Control | What it shows |
+|---|---|
+| Language, Theme, Custom palette | Language, scheme and your own colours, with no reload |
+| SVG | What a refusal looks like when the format is not allowed |
+| Compress | `off`, `lossless` (metadata only), `auto` (0.85), `0.6`, `0.3` |
+| Resize | `off`, 1920, 1024, 512, 128×128 px |
+| Malware check | Turns screening on at the server |
+| Upload history | Removes the history panel — it belongs to the page, not the widget |
+
+The history reports both sizes, so the saving is visible immediately:
+
+```
+change: 1 file(s), 6.8 KB — was 783.1 KB, saved 776.4 KB (99%)
+  photo.jpg: 783.1 KB -> 6.8 KB
+```
+
+**The demo's malware check is a simulation.** So that trying it needs no account and no API
+key — and so that nobody's photographs go to a third party — it reports any file whose name
+contains `virus` as malware. Rename a photo to `photo-virus.jpg`, turn the check on, press
+Upload, and you will see the refusal. The real one is
+`scan: { service: 'virustotal', apiKey }`.
 
 ### Layout
 
@@ -445,7 +808,9 @@ test/               tests
   by design.
 - Previews are `background-image` on a div, so an animated GIF or WebP animates in the
   tile as the browser sees fit — there is no frame extraction.
-- No image processing at all: no resizing, no re-encoding, no EXIF stripping.
+- Compression is the browser's canvas, so there is no *lossless recompression*: squeezing
+  a JPEG without touching its pixels needs a codec, and a codec is a dependency. Dropping
+  metadata is exact; everything else re-encodes.
 - `maxPixels` guards the preview, not the server: a host that wants a dimension limit
   server-side has to decode there too, which needs an image library this package does not
   depend on.

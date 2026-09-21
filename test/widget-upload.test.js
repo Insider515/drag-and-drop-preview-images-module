@@ -401,3 +401,60 @@ describe('upload: autoUpload', () => {
     drop.destroy();
   });
 });
+
+describe('upload: a batch the server refused in full', () => {
+  test('each tile says why that file failed, not one message for all of them', async () => {
+    // The server answers 400 when nothing landed, and the body still names
+    // every file and its reason. An earlier version threw that away and showed
+    // "Error 400" on every tile.
+    const drop = await ready(['a.png', 'b.png']);
+    const done = drop.upload();
+    await settled();
+    FakeXHR.last.respond(400, {
+      uploaded: [],
+      failures: [
+        { name: 'a.png', code: 'INFECTED', params: { malicious: 42 } },
+        { name: 'b.png', code: 'TOO_LARGE', params: { limit: 1024 } },
+      ],
+    });
+    await done;
+
+    assert.deepEqual(drop.files.map((f) => f.error.code), ['INFECTED', 'TOO_LARGE']);
+    assert.deepEqual(drop.files[0].error.detail, { malicious: 42 });
+
+    const captions = tiles(drop).map((t) => t.querySelector('.ddp-size').textContent);
+    assert.match(captions[0], /malware/i);
+    assert.match(captions[1], /1\.0 KB/);
+    drop.destroy();
+  });
+
+  test('a refusal with no per-file detail still reads as a sentence', async () => {
+    // `srv.HTTP_ERROR` is "Error {status}" — without the status it reached the
+    // screen with the placeholder still in it.
+    const drop = await ready();
+    const done = drop.upload();
+    await settled();
+    FakeXHR.last.respond(502, '<html>bad gateway</html>', 'text/html');
+    await done;
+
+    const text = tiles(drop)[0].querySelector('.ddp-size').textContent;
+    assert.ok(!text.includes('{status}'), `placeholder left in the text: ${text}`);
+    assert.match(text, /502/);
+    drop.destroy();
+  });
+
+  test('files the server did not name keep the general reason', async () => {
+    const drop = await ready(['a.png', 'b.png']);
+    const done = drop.upload();
+    await settled();
+    FakeXHR.last.respond(400, {
+      uploaded: [],
+      failures: [{ name: 'a.png', code: 'INFECTED' }],
+      code: 'UPLOAD_FAILED',
+    });
+    await done;
+
+    assert.deepEqual(drop.files.map((f) => f.error.code), ['INFECTED', 'UPLOAD_FAILED']);
+    drop.destroy();
+  });
+});

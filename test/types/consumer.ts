@@ -130,3 +130,58 @@ void service.sweepTemp();
 declare const result: UploadResult;
 void result.uploaded[0]?.type;
 void result.failures[0]?.code;
+
+// --- sessions -------------------------------------------------------------
+import type { SessionOptions } from '../../types/server.js';
+
+const sessionsByCookie: SessionOptions = {
+  identify: (req) => req.headers.cookie?.split('sid=')[1]?.split(';')[0] ?? null,
+  scope: 'directory',
+  required: true,
+};
+
+createUploadHandler({ root: './uploads', sessions: sessionsByCookie });
+createUploadHandler({ root: './uploads' }); // sessions are optional
+createUploadHandler({
+  root: './uploads',
+  sessions: { identify: async () => 'anna', scope: 'label', required: false },
+  rename: (name, meta) => `${meta.identity ?? 'anon'}-${name}`,
+});
+
+// --- malware screening ----------------------------------------------------
+import type { ScanOptions, ScanVerdict } from '../../types/server.js';
+
+const viaVirusTotal: ScanOptions = {
+  service: 'virustotal',
+  apiKey: process.env.VT_API_KEY,
+  onUnknown: 'accept',
+  onError: 'reject',
+  timeoutMs: 5000,
+};
+
+const viaOwnService: ScanOptions = {
+  check: async ({ sha256, size }, signal) => {
+    const verdict: ScanVerdict = size > 0 && sha256.length === 64 ? 'clean' : 'unknown';
+    return { verdict, detail: null };
+  },
+};
+
+createUploadHandler({ root: './uploads', scan: viaVirusTotal });
+createUploadHandler({ root: './uploads', scan: viaOwnService });
+createUploadHandler({ root: './uploads' }); // screening is optional
+
+// --- compression ----------------------------------------------------------
+import type { CompressOptions } from '../../types/index.js';
+
+const thumbnails: CompressOptions = {
+  maxWidth: 128,
+  maxHeight: 128,
+  fit: 'cover',
+  quality: 'auto',
+  stripMetadata: true,
+};
+
+new DropPreview('#images', { compress: thumbnails });
+new DropPreview('#images', { compress: { quality: 'lossless' } });
+new DropPreview('#images', { compress: { maxWidth: 1920, quality: 0.8, format: 'image/webp' } });
+new DropPreview('#images', {}); // compression is optional

@@ -58,5 +58,8 @@ export default {
     'srv.NO_SPACE': 'No queda espacio en el servidor',
     'srv.DENIED': 'No se permite subir',
     'srv.INTERNAL': 'Error interno del servidor',
+    'srv.INFECTED': 'El archivo fue señalado como malware',
+    'srv.NOT_SCREENED': 'No se pudo comprobar si el archivo contiene malware',
+    'srv.SCAN_FAILED': 'La comprobación de malware no está disponible, inténtalo de nuevo',
   },
 };

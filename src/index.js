@@ -29,6 +29,10 @@ export { DEFAULT_LIMITS, fileKey, inspectFile } from './core/validate.js';
 export { UploadError, uploadFiles } from './core/uploader.js';
 export { formatBytes } from './core/format.js';
 
+// Shrinking pictures on the page. Off unless the `compress` option is set.
+export { AUTO_QUALITY, compressFile, normaliseCompress, targetSize } from './core/compress.js';
+export { readExifOrientation, stripMetadata } from './core/metadata.js';
+
 /**
  * Convenience factory.
  *

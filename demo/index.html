@@ -32,8 +32,15 @@
     <h1>drag-and-drop-preview-images-module</h1>
     <p class="lead">
       Drop images below, or click to choose. Every file is identified by its own bytes —
-      rename an executable to <code>.png</code> and it is still refused. The event log at the
-      bottom belongs to this page, not to the widget — it is not part of the package.
+      rename an executable to <code>.png</code> and it is still refused.
+    </p>
+    <p class="lead">
+      Compression happens on this page before anything is sent — pick a size and a quality
+      and watch the numbers in the history below. The malware check here is a
+      <strong>simulation</strong> so that the demo needs no API key: with it on, any file whose
+      name contains <code>virus</code> is reported as malware. The real one is a VirusTotal
+      hash lookup. The history panel at the bottom belongs to this page, not to the widget —
+      it is not part of the package, and the button above removes it.
     </p>
 
     <div class="controls">
@@ -45,7 +52,22 @@
       </select>
       <button id="palette" type="button">Custom palette: off</button>
       <button id="svg" type="button">SVG: refused</button>
-      <button id="logtoggle" type="button">Event log: on</button>
+      <select id="quality" aria-label="Compression quality">
+        <option value="off">Compress: off</option>
+        <option value="lossless">Compress: lossless (metadata only)</option>
+        <option value="auto">Compress: auto (0.85)</option>
+        <option value="0.6">Compress: quality 0.6</option>
+        <option value="0.3">Compress: quality 0.3</option>
+      </select>
+      <select id="maxsize" aria-label="Resize to">
+        <option value="0">Resize: off</option>
+        <option value="1920">Resize: 1920px</option>
+        <option value="1024">Resize: 1024px</option>
+        <option value="512">Resize: 512px</option>
+        <option value="128">Resize: 128×128</option>
+      </select>
+      <button id="scan" type="button">Malware check: off</button>
+      <button id="logtoggle" type="button">Upload history: shown</button>
     </div>
 
     <form id="form">

@@ -58,5 +58,8 @@ export default {
     'srv.NO_SPACE': 'Plus d’espace sur le serveur',
     'srv.DENIED': 'L’envoi n’est pas autorisé',
     'srv.INTERNAL': 'Erreur interne du serveur',
+    'srv.INFECTED': 'Le fichier a été signalé comme logiciel malveillant',
+    'srv.NOT_SCREENED': 'Impossible de vérifier si le fichier contient un logiciel malveillant',
+    'srv.SCAN_FAILED': 'La vérification anti-malware est indisponible, réessayez',
   },
 };

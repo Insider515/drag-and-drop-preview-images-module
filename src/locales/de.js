@@ -58,5 +58,8 @@ export default {
     'srv.NO_SPACE': 'Kein Speicherplatz mehr auf dem Server',
     'srv.DENIED': 'Hochladen ist nicht erlaubt',
     'srv.INTERNAL': 'Interner Serverfehler',
+    'srv.INFECTED': 'Die Datei wurde als Schadsoftware gemeldet',
+    'srv.NOT_SCREENED': 'Die Datei konnte nicht auf Schadsoftware geprüft werden',
+    'srv.SCAN_FAILED': 'Die Schadsoftware-Prüfung ist nicht verfügbar, bitte erneut versuchen',
   },
 };

@@ -159,6 +159,61 @@ export interface Rejection {
   detail: Record<string, unknown> | null;
 }
 
+/**
+ * Shrinking pictures in the browser, before they are uploaded.
+ *
+ * Leave the whole block out and nothing is touched, which is the default.
+ */
+export interface CompressOptions {
+  /** Fit the picture inside this many pixels across. */
+  maxWidth?: number;
+  /** Fit the picture inside this many pixels down. */
+  maxHeight?: number;
+  /** `contain` fits inside the box (the default); `cover` fills it. */
+  fit?: 'contain' | 'cover';
+  /**
+   * `'auto'` (the default) encodes at 0.85 — fifteen percent off the top of
+   * the scale. A number sets the encoder's dial yourself. `'lossless'` never
+   * re-encodes and only drops metadata.
+   *
+   * It has no effect on PNG, which has no quality dial: to make one smaller,
+   * resize it or set `format`.
+   */
+  quality?: 'auto' | 'lossless' | number;
+  /** `'auto'` keeps the format it came in as. */
+  format?: 'auto' | 'image/jpeg' | 'image/png' | 'image/webp';
+  /** Drop EXIF, XMP and comments. On by default. */
+  stripMetadata?: boolean;
+  /** Keep the original when the new file is not actually smaller. On by default. */
+  skipIfLarger?: boolean;
+}
+
+/** Fifteen percent below the top of the scale: 0.85. */
+export declare const AUTO_QUALITY: number;
+
+export declare function normaliseCompress(raw: CompressOptions | null | undefined): object | null;
+export declare function targetSize(
+  width: number,
+  height: number,
+  config: object
+): { width: number; height: number } | null;
+export declare function compressFile(
+  file: File,
+  decoded: { image: unknown; type: string; width: number; height: number },
+  config: object
+): Promise<{ file: File; changed: boolean }>;
+
+/** Drop metadata without touching a pixel. Null when there was nothing to drop. */
+export declare function stripMetadata(
+  buffer: ArrayBuffer | Uint8Array,
+  type: string
+): Uint8Array | null;
+export declare function readExifOrientation(
+  view: Uint8Array,
+  start: number,
+  end: number
+): number;
+
 export interface DropPreviewOptions {
   /**
    * Where to POST the files. Left null, the widget stays a form field: the
@@ -177,6 +232,8 @@ export interface DropPreviewOptions {
   /** SVG is XML that can carry script; it is refused unless asked for. */
   allowSvg?: boolean;
   limits?: Partial<Limits> | null;
+  /** Off unless set; see {@link CompressOptions}. */
+  compress?: CompressOptions;
 
   autoUpload?: boolean;
   showUploadButton?: boolean;

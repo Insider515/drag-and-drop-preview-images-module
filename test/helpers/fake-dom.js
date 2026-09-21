@@ -155,9 +155,51 @@ class FakeFormData {
 export function installDom() {
   const root = new FakeNode('div');
 
+  // A canvas that encodes plausibly rather than really: the size it reports is
+  // a function of the pixels it was given and the quality it was asked for, so
+  // a test can tell a resize from a re-encode from a no-op.
+  const canvas = {
+    calls: [],
+    /** Bytes per pixel at quality 1, per type. */
+    weights: { 'image/jpeg': 3, 'image/png': 8, 'image/webp': 2 },
+    /** Types this "browser" cannot produce. */
+    unsupported: new Set(),
+    reset() {
+      canvas.calls.length = 0;
+      canvas.unsupported.clear();
+    },
+  };
+
+  const makeCanvas = (node) => {
+    node.width = 0;
+    node.height = 0;
+    node.drawn = [];
+    node.getContext = (kind) => (kind === '2d' ? {
+      fillStyle: '',
+      fillRect: (...args) => node.drawn.push(['fillRect', ...args]),
+      drawImage: (...args) => node.drawn.push(['drawImage', ...args.slice(1)]),
+    } : null);
+    node.toBlob = (callback, type = 'image/png', quality) => {
+      canvas.calls.push({ width: node.width, height: node.height, type, quality });
+      if (canvas.unsupported.has(type)) {
+        // What a browser does for a type it cannot encode: hand back a PNG.
+        const fallback = canvas.weights['image/png'] * node.width * node.height;
+        queueMicrotask(() => callback(new Blob([new Uint8Array(Math.max(1, Math.round(fallback)))], { type: 'image/png' })));
+        return;
+      }
+      const perPixel = canvas.weights[type] ?? 3;
+      const factor = quality === undefined ? 1 : quality;
+      const bytes = Math.max(1, Math.round(node.width * node.height * perPixel * factor));
+      queueMicrotask(() => callback(new Blob([new Uint8Array(bytes)], { type })));
+    };
+    return node;
+  };
+
   globalThis.Node = FakeNode; // `el()` asks `child instanceof Node`
   globalThis.document = {
-    createElement: (tag) => new FakeNode(tag),
+    createElement: (tag) => (String(tag).toLowerCase() === 'canvas'
+      ? makeCanvas(new FakeNode(tag))
+      : new FakeNode(tag)),
     createTextNode: (text) =>
       Object.assign(new FakeNode('#text'), { textContent: String(text) }),
     querySelector: () => root,
@@ -205,9 +247,11 @@ export function installDom() {
     root,
     urls,
     decode,
+    canvas,
     /** Put every knob back the way a fresh test expects it. */
     reset() {
       urls.clear();
+      canvas.reset();
       FakeXHR.last = null;
       Object.assign(decode, { width: 4, height: 4, fail: false, delayMs: 0, manual: false });
       decode.pending.length = 0;

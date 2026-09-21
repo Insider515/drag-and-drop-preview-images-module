@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { UploadError } from './errors.js';
 import { createRouter } from './http.js';
 import { DEFAULT_LIMITS, UploadService } from './upload-service.js';
+import { assertValidName } from './safe-name.js';
 
 const require = createRequire(import.meta.url);
 
@@ -88,10 +89,37 @@ function assertSameOrigin(req, allowedOrigins) {
  * @param {number} [options.maxConcurrent] uploads in flight; beyond that, 503
  * @param {string[]|((origin: string, req: object) => boolean)|false} [options.allowedOrigins]
  * @param {(req: object, context: object) => (boolean|Promise<boolean>)} [options.authorize]
+ * @param {object} [options.sessions] leave it out and the endpoint knows
+ *   nothing about who is uploading, which is how it behaves by default. Pass
+ *   it and every upload is filed under whatever your application already uses
+ *   to tell one visitor from another — a login, or a cookie an anonymous
+ *   visitor carries.
+ * @param {(req: object) => (string|null|Promise<string|null>)} options.sessions.identify
+ *   the id, read from the request your framework has already prepared.
+ * @param {'directory'|'label'} [options.sessions.scope] `directory` (the
+ *   default) gives each session its own subdirectory of `root`, so two people
+ *   uploading `photo.png` do not meet; `label` keeps one flat directory and
+ *   only reports who uploaded what, for a host that records ownership itself.
+ * @param {boolean} [options.sessions.required] `true` by default: a request
+ *   with no session is refused. Set it to `false` to let those fall back to
+ *   the shared root.
  * @param {(name: string, meta: object) => string} [options.rename]
  * @param {(message: string, detail?: unknown) => void} [options.onWarning]
  * @returns {(req: object, res: object, next?: Function) => Promise<boolean>}
  */
+/** Read the `sessions` block, or null when the host did not ask for sessions. */
+function normaliseSessions(raw) {
+  if (!raw) return null;
+  if (typeof raw.identify !== 'function') {
+    throw new Error('sessions.identify must be a function');
+  }
+  const scope = raw.scope ?? 'directory';
+  if (scope !== 'directory' && scope !== 'label') {
+    throw new Error("sessions.scope must be 'directory' or 'label'");
+  }
+  return { identify: raw.identify, scope, required: raw.required ?? true };
+}
+
 export function createUploadHandler(options = {}) {
   const service = new UploadService(options);
   const limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
@@ -102,6 +130,7 @@ export function createUploadHandler(options = {}) {
   const field = options.field ?? 'images[]';
   const maxConcurrent = Math.max(1, options.maxConcurrent ?? 8);
   const { allowedOrigins, authorize } = options;
+  const sessions = normaliseSessions(options.sessions);
   const warn = (message, detail) => options.onWarning?.(message, detail);
 
   // Started here so the directory exists before the first request, but its
@@ -147,13 +176,59 @@ export function createUploadHandler(options = {}) {
       throw new UploadError(403, 'DENIED', 'Uploading is not allowed');
     }
 
+    // Asked before the body is read, for the same reason `authorize` is: a
+    // request with nowhere to put its files should not be streamed first.
+    const identity = sessions ? await resolveIdentity(req) : null;
+
     inFlight += 1;
     try {
-      const result = await readMultipart(req);
+      const result = await readMultipart(req, identity);
       const status = result.uploaded.length === 0 && result.failures.length > 0 ? 400 : 200;
       res.status(status).json(result);
     } finally {
       inFlight -= 1;
+    }
+  }
+
+  /**
+   * Turn whatever `sessions.identify` returns into something safe on disk.
+   *
+   * The value usually comes from a cookie, which is to say from the client, so
+   * it is checked as strictly as a file name rather than trusted.
+   */
+  async function resolveIdentity(req) {
+    let value;
+    try {
+      value = await sessions.identify(req);
+    } catch (err) {
+      warn('sessions.identify() threw', err);
+      throw new UploadError(500, 'INTERNAL', 'Could not establish who is uploading');
+    }
+
+    if (value === null || value === undefined || value === '') {
+      if (!sessions.required) return null;
+      // Falling back to the shared root here would put one visitor's files
+      // where another can reach them, and it would do it silently — exactly
+      // when a session hook has quietly broken.
+      throw new UploadError(403, 'NO_SESSION', 'No session to file this upload under');
+    }
+
+    const text = String(value);
+    if (sessions.scope === 'label') return text.slice(0, 200);
+
+    // `assertValidName` is built for file names, where keeping only the last
+    // segment is right — a directory upload legitimately sends `a/b/c.png`.
+    // For a session id it is not: `/etc` would become `etc` and `a/b` would
+    // become `b`, so two different sessions could quietly land in one folder.
+    // Here the id has to already be a single usable segment, or it is refused.
+    try {
+      if (assertValidName(text) !== text) throw new Error('not a single segment');
+      return text;
+    } catch {
+      // Deliberately not repaired. A session id that is not a usable folder
+      // name is the host's to hash or encode; guessing here is what would map
+      // two sessions onto one directory.
+      throw new UploadError(400, 'INVALID_SESSION', 'The session id cannot be used as a folder name');
     }
   }
 
@@ -165,7 +240,7 @@ export function createUploadHandler(options = {}) {
    * free-space check, and the limit that matters — the total for the request —
    * could only be enforced after the fact.
    */
-  function readMultipart(req) {
+  function readMultipart(req, identity) {
     const Busboy = loadBusboy();
     return new Promise((resolve, reject) => {
       const uploaded = [];
@@ -205,7 +280,7 @@ export function createUploadHandler(options = {}) {
           live.clear();
           reject(err);
         } else {
-          resolve({ uploaded, failures, fields });
+          resolve({ uploaded, failures, fields, ...(identity === null ? {} : { owner: identity }) });
         }
       };
 
@@ -255,6 +330,8 @@ export function createUploadHandler(options = {}) {
             // refused it while leaving it on disk.
             const stored = await service.store(info.filename, stream, {
               maxBytes: Math.max(0, limits.maxRequestSize - total),
+              subdir: sessions?.scope === 'directory' ? identity : null,
+              identity,
             });
             total += stored.size;
             uploaded.push({
@@ -262,6 +339,9 @@ export function createUploadHandler(options = {}) {
               original: info.filename,
               size: stored.size,
               type: stored.type,
+              // Who it was filed under, so the host can record ownership
+              // without working it out from the request a second time.
+              ...(identity === null ? {} : { owner: identity }),
             });
           } catch (err) {
             // One bad file does not fail the batch: the client is told which

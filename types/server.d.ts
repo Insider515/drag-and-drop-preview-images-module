@@ -50,7 +50,9 @@ export interface UploadServiceOptions {
   onConflict?: 'rename' | 'refuse' | 'overwrite';
   limits?: Partial<ServerLimits>;
   /** Choose the stored name yourself, e.g. a uuid instead of the user's name. */
-  rename?: (name: string, meta: { type: string }) => string;
+  rename?: (name: string, meta: { type: string; identity: string | null }) => string;
+  /** Off unless set; see {@link ScanOptions}. */
+  scan?: ScanOptions;
 }
 
 /**
@@ -78,9 +80,77 @@ export interface UploadFailure {
 }
 
 export interface UploadResult {
-  uploaded: Array<{ name: string; original: string; size: number; type: string }>;
+  uploaded: Array<{
+    name: string;
+    original: string;
+    size: number;
+    type: string;
+    /** Present only when `sessions` is configured: who it was filed under. */
+    owner?: string;
+  }>;
   failures: UploadFailure[];
   fields: Record<string, string>;
+  /** Present only when `sessions` is configured. */
+  owner?: string;
+}
+
+/** What a screening check may answer. Anything else counts as a failure. */
+export type ScanVerdict = 'clean' | 'malicious' | 'unknown';
+
+/**
+ * Optional malware screening, before a file is given its real name.
+ *
+ * Leave the whole block out and nothing is screened, which is the default.
+ *
+ * The built-in service is a **hash lookup**: only a SHA-256 leaves the server,
+ * never the file. That decides what it can do — it recognises malware somebody
+ * has already reported, and a brand-new sample is unknown to it.
+ */
+export interface ScanOptions {
+  /** The built-in lookup. Requires `apiKey`. */
+  service?: 'virustotal';
+  /** Your VirusTotal key. Never sent anywhere but to VirusTotal. */
+  apiKey?: string;
+  /** Any other scanner: ClamAV over a socket, an internal service, anything. */
+  check?: (
+    file: { sha256: string; name: string; type: string; size: number },
+    signal: AbortSignal
+  ) => Promise<{ verdict: ScanVerdict; detail?: object | null }>;
+  /**
+   * What to do with a file the database has never seen. `accept` by default:
+   * almost nothing an ordinary person uploads has ever been reported.
+   */
+  onUnknown?: 'accept' | 'reject';
+  /**
+   * What to do when the check itself fails — down, rate-limited, timed out.
+   * `reject` by default: accepting would mean believing you are protected
+   * while you are not, and that failure is silent.
+   */
+  onError?: 'accept' | 'reject';
+  /** How long one check may take. 5000 ms by default. */
+  timeoutMs?: number;
+}
+
+/**
+ * Filing uploads under whatever the host already uses to tell visitors apart.
+ *
+ * Leave the whole block out and the endpoint knows nothing about sessions,
+ * which is how it behaves by default.
+ */
+export interface SessionOptions {
+  /** The id, read from a request the host's own middleware has prepared. */
+  identify: (req: UploadRequest) => string | null | Promise<string | null>;
+  /**
+   * `directory` (the default) gives each session its own subdirectory of
+   * `root`, so two visitors uploading `photo.png` do not meet. The id has to be
+   * a usable folder name; one that is not is refused rather than repaired.
+   *
+   * `label` keeps one flat directory and only reports who uploaded what, for a
+   * host that records ownership itself. Any id will do there.
+   */
+  scope?: 'directory' | 'label';
+  /** `true` by default: a request with no session is refused with 403. */
+  required?: boolean;
 }
 
 /** The request as the routes see it. */
@@ -110,6 +180,8 @@ export interface UploadHandlerOptions extends UploadServiceOptions {
     req: UploadRequest,
     context: { route: string }
   ) => boolean | Promise<boolean>;
+  /** Off unless set; see {@link SessionOptions}. */
+  sessions?: SessionOptions;
   onWarning?: (message: string, detail?: unknown) => void;
 }
 
@@ -147,6 +219,7 @@ export declare function assertValidName(raw: string): string;
 export declare function resolveInside(root: string, name: string): string;
 export declare function withSuffix(name: string, n: number): string;
 
+export type { ScanOptions, ScanVerdict, SessionOptions };
 export declare function createRouter(options?: {
   basePath?: string;
   jsonLimit?: (req: UploadRequest) => number;

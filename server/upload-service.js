@@ -4,6 +4,7 @@ import fsc from 'node:fs';
 import path from 'node:path';
 
 import { UploadError } from './errors.js';
+import { createScanner, screen } from './scan.js';
 import { KNOWN_IMAGE_TYPES, SNIFF_BYTES, looksLikeSvg, sniffImage } from './sniff.js';
 import { assertValidName, resolveInside, withSuffix } from './safe-name.js';
 
@@ -28,6 +29,9 @@ export const DEFAULT_LIMITS = {
  * and reusable from a framework that wants to do its own request handling.
  */
 export class UploadService {
+  /** Session directories already created, so each one costs one mkdir. */
+  #madeDirs;
+
   /**
    * @param {object} options
    * @param {string} options.root the one directory files may land in
@@ -48,6 +52,9 @@ export class UploadService {
     this.onConflict = options.onConflict ?? 'rename';
     this.limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
     this.renameHook = options.rename ?? null;
+    this.scanner = createScanner(options.scan);
+    this.warn = options.onWarning ?? (() => {});
+    this.#madeDirs = new Set();
   }
 
   /**
@@ -100,7 +107,11 @@ export class UploadService {
     const name = assertValidName(rawName);
     await this.#assertSpace();
 
-    const temp = path.join(this.root, `${TEMP_PREFIX}${crypto.randomUUID()}`);
+    // Everything for this file — the temp copy included — happens inside the
+    // directory it is going to, so the rename that finishes it is a move
+    // within one directory rather than across the tree.
+    const dir = await this.#directoryFor(options.subdir ?? null);
+    const temp = path.join(dir, `${TEMP_PREFIX}${crypto.randomUUID()}`);
     const cap = Math.min(this.limits.maxFileSize, options.maxBytes ?? Infinity);
 
     let outcome;
@@ -123,8 +134,31 @@ export class UploadService {
       throw new UploadError(400, 'EMPTY', 'The file is empty');
     }
 
-    const stored = await this.#claim(temp, name, outcome.type);
-    return { name: stored.name, size: outcome.size, type: outcome.type, path: stored.absolute };
+    // Screened while it is still a temp file with a random name: a file that
+    // is refused here never existed under a name anything would serve.
+    if (this.scanner) {
+      try {
+        await screen(this.scanner, {
+          sha256: outcome.sha256,
+          name,
+          type: outcome.type,
+          size: outcome.size,
+        }, this.warn);
+      } catch (err) {
+        await fs.rm(temp, { force: true });
+        throw err;
+      }
+    }
+
+    const stored = await this.#claim(temp, dir, name, outcome.type, options.identity ?? null);
+    return {
+      name: stored.name,
+      size: outcome.size,
+      type: outcome.type,
+      path: stored.absolute,
+      directory: dir,
+      sha256: outcome.sha256,
+    };
   }
 
   /**
@@ -143,6 +177,9 @@ export class UploadService {
       let head = Buffer.alloc(0);
       let size = 0;
       let type = null;
+      // Computed as the file goes by, so screening it afterwards costs no
+      // second pass over the bytes.
+      const digest = crypto.createHash('sha256');
       let failure = null;
       /** Set when the part itself went wrong, as opposed to being refused. */
       let broken = null;
@@ -177,6 +214,7 @@ export class UploadService {
             type = verdict.type;
           }
         }
+        digest.update(chunk);
         if (!out.write(chunk)) stream.pause();
       });
 
@@ -205,7 +243,8 @@ export class UploadService {
       out.on('error', () => {
         broken = broken ?? new UploadError(500, 'INTERNAL', 'Could not store the file');
       });
-      out.on('close', () => (broken ? reject(broken) : resolve({ size, type, failure })));
+      out.on('close', () =>
+        (broken ? reject(broken) : resolve({ size, type, failure, sha256: digest.digest('hex') })));
 
       // Every listener is attached; the caller may have paused the stream
       // until exactly this point.
@@ -248,12 +287,14 @@ export class UploadService {
    * a create, a second request uploading the same name would pass the check
    * too, and one of the two files would be lost.
    */
-  async #claim(temp, name, type) {
-    const chosen = this.renameHook ? assertValidName(this.renameHook(name, { type })) : name;
+  async #claim(temp, dir, name, type, identity) {
+    const chosen = this.renameHook
+      ? assertValidName(this.renameHook(name, { type, identity }))
+      : name;
 
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const candidate = attempt === 0 ? chosen : withSuffix(chosen, attempt + 1);
-      const absolute = resolveInside(this.root, candidate);
+      const absolute = resolveInside(dir, candidate);
 
       if (this.onConflict === 'overwrite') {
         await fs.rename(temp, absolute);
@@ -279,6 +320,31 @@ export class UploadService {
     throw new UploadError(409, 'EXISTS', `Could not find a free name for “${chosen}”`);
   }
 
+  /**
+   * The directory one upload goes into: the root, or a subdirectory of it.
+   *
+   * The name comes from whatever the host calls a session, so it is checked
+   * exactly as strictly as a file name and then checked again after resolving
+   * — a symlink planted in the upload directory is the case the second check
+   * exists for. It is created on demand and remembered, so a busy session does
+   * not pay for an mkdir per file.
+   */
+  async #directoryFor(subdir) {
+    if (!subdir) return this.root;
+
+    const segment = assertValidName(subdir);
+    const absolute = resolveInside(this.root, segment);
+    if (this.#madeDirs.has(absolute)) return absolute;
+
+    await fs.mkdir(absolute, { recursive: true, mode: 0o755 });
+    // Resolved after creating it: a symlink already sitting at that name would
+    // otherwise pass the lexical check above and put the files somewhere else.
+    const real = await fs.realpath(absolute);
+    resolveInside(this.root, path.relative(this.root, real) || '.');
+    this.#madeDirs.add(absolute);
+    return absolute;
+  }
+
   async #assertSpace() {
     if (!this.limits.minFreeSpace) return;
     try {
@@ -293,20 +359,35 @@ export class UploadService {
     }
   }
 
-  /** Remove any temp files left by an interrupted process. */
+  /**
+   * Remove any temp files left by an interrupted process.
+   *
+   * Session directories are swept too: with `sessions` turned on the files —
+   * and so anything abandoned — live one level down, and a sweep that only
+   * looked at the root would quietly find nothing to do.
+   */
   async sweepTemp(olderThanMs = 60 * 60 * 1000) {
     await this.init();
     const now = Date.now();
     let removed = 0;
-    for (const entry of await fs.readdir(this.root)) {
-      if (!entry.startsWith(TEMP_PREFIX)) continue;
-      const absolute = path.join(this.root, entry);
-      const stats = await fs.stat(absolute).catch(() => null);
-      if (stats && now - stats.mtimeMs > olderThanMs) {
-        await fs.rm(absolute, { force: true });
-        removed += 1;
+
+    const sweep = async (dir, descend) => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+        const absolute = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (descend) await sweep(absolute, false);
+          continue;
+        }
+        if (!entry.name.startsWith(TEMP_PREFIX)) continue;
+        const stats = await fs.stat(absolute).catch(() => null);
+        if (stats && now - stats.mtimeMs > olderThanMs) {
+          await fs.rm(absolute, { force: true });
+          removed += 1;
+        }
       }
-    }
+    };
+
+    await sweep(this.root, true);
     return removed;
   }
 }

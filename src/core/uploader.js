@@ -96,14 +96,21 @@ export function uploadFiles(config) {
         resolve(payload ?? { uploaded: [], failures: [] });
         return;
       }
-      reject(
-        new UploadError(
-          payload?.code ?? 'HTTP_ERROR',
-          payload?.error ?? `Error ${xhr.status}`,
-          xhr.status,
-          payload?.params ?? null
-        )
+      const failure = new UploadError(
+        payload?.code ?? 'HTTP_ERROR',
+        payload?.error ?? `Error ${xhr.status}`,
+        xhr.status,
+        // `srv.HTTP_ERROR` reads "Error {status}", so the status has to travel
+        // with it or the placeholder reaches the screen as written.
+        payload?.params ?? { status: xhr.status }
       );
+      // A batch the server refused in full still says which file failed and
+      // why. Dropping that here left the widget showing one generic message
+      // in place of the reasons it had been given.
+      if (Array.isArray(payload?.failures) && payload.failures.length) {
+        failure.failures = payload.failures;
+      }
+      reject(failure);
     });
 
     xhr.addEventListener('error', () => {

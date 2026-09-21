@@ -6,6 +6,10 @@ import { DropPreview, LOCALES } from '../src/index.js';
 
 const log = document.getElementById('log');
 
+const bytes = (n) => (n < 1024 ? `${n} B`
+  : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB`
+  : `${(n / 1024 ** 2).toFixed(1)} MB`);
+
 // The log is this page's, not the widget's — nothing in the package renders it.
 // The switch is here because seeing it turn off is quicker than being told.
 let logging = true;
@@ -19,6 +23,8 @@ let locale = 'en';
 let scheme = 'auto';
 let palette = false;
 let allowSvg = false;
+let quality = 'off';
+let maxSize = 0;
 let drop = mount();
 
 const BRAND = {
@@ -30,20 +36,46 @@ const BRAND = {
   dark: { accent: '#c4b5fd', accentSoft: '#2b2150' },
 };
 
+/**
+ * The `compress` block the two selectors add up to, or null for "off".
+ *
+ * `lossless` is metadata only and never resizes, so a size chosen alongside it
+ * would be quietly ignored — the selector says so rather than pretending.
+ */
+function compressOption() {
+  if (quality === 'off' && !maxSize) return null;
+  if (quality === 'lossless') return { quality: 'lossless' };
+  return {
+    ...(maxSize ? { maxWidth: maxSize, maxHeight: maxSize } : {}),
+    quality: quality === 'off' ? 'auto' : (quality === 'auto' ? 'auto' : Number(quality)),
+  };
+}
+
 function mount() {
   document.getElementById('host').innerHTML = '';
   const instance = new DropPreview('#host', {
     endpoint: '/api/upload',
-    name: 'files[]',
     locale,
     colorScheme: scheme,
     allowSvg,
     theme: palette ? BRAND : null,
+    compress: compressOption(),
     limits: { maxFiles: 12, maxFileSize: 8 * 1024 * 1024 },
   });
 
-  instance.on('change', ({ files }) =>
-    say(`change: ${files.length} file(s), ${files.reduce((n, f) => n + f.size, 0)} bytes`));
+  instance.on('change', ({ files }) => {
+    const total = files.reduce((n, f) => n + f.size, 0);
+    const before = files.reduce((n, f) => n + f.originalSize, 0);
+    const saved = before - total;
+    say(`change: ${files.length} file(s), ${bytes(total)}`
+      + (saved > 0 ? ` — was ${bytes(before)}, saved ${bytes(saved)} (${Math.round((saved / before) * 100)}%)` : ''));
+    for (const file of files) {
+      if (file.originalSize > file.size) {
+        say(`  ${file.name}: ${bytes(file.originalSize)} -> ${bytes(file.size)}`);
+      }
+    }
+  });
+  instance.on('warning', ({ code, error }) => say(`warning: ${code} — ${error?.message ?? ''}`));
   instance.on('rejected', ({ rejected }) => {
     for (const item of rejected) {
       say(`rejected: ${item.file.name} — ${item.code} — ${instance.describeError(item.code, item.detail)}`);
@@ -51,7 +83,16 @@ function mount() {
   });
   instance.on('uploaded', ({ answer }) =>
     say(`uploaded: ${answer.uploaded.length} ok, ${answer.failures.length} failed`));
-  instance.on('error', ({ code, message }) => say(`error: ${code} — ${message}`));
+  instance.on('error', ({ code, message }) => {
+    say(`error: ${code} — ${message}`);
+    // The batch-level code is the blunt one; each tile knows its own reason,
+    // and that is what the person is actually looking at.
+    for (const file of instance.files) {
+      if (file.error) {
+        say(`  ${file.name}: ${file.error.code} — ${instance.describeError(file.error.code, file.error.detail)}`);
+      }
+    }
+  });
   return instance;
 }
 
@@ -93,10 +134,49 @@ svgButton.addEventListener('click', () => {
   remount();
 });
 
+const qualitySelect = document.getElementById('quality');
+const sizeSelect = document.getElementById('maxsize');
+
+qualitySelect.addEventListener('change', () => {
+  quality = qualitySelect.value;
+  // Nothing is resized on the lossless path, so offering a size there would be
+  // a control that does nothing.
+  sizeSelect.disabled = quality === 'lossless';
+  remount();
+  say(`compression: ${JSON.stringify(compressOption())}`);
+});
+
+sizeSelect.addEventListener('change', () => {
+  maxSize = Number(sizeSelect.value);
+  remount();
+  say(`compression: ${JSON.stringify(compressOption())}`);
+});
+
+// The screening switch is the one control here that changes the *server*: the
+// dev server keeps two endpoints and this chooses between them. Nothing like
+// this route exists in the package.
+const scanButton = document.getElementById('scan');
+let screening = false;
+scanButton.addEventListener('click', async () => {
+  screening = !screening;
+  scanButton.disabled = true;
+  try {
+    const response = await fetch(`/api/demo/scan?on=${screening ? 1 : 0}`, { method: 'POST' });
+    ({ screening } = await response.json());
+    say(`malware check: ${screening ? 'on — a file named *virus* will be refused' : 'off'}`);
+  } catch (err) {
+    screening = false;
+    say(`malware check: could not be switched — ${err.message}`);
+  } finally {
+    scanButton.textContent = `Malware check: ${screening ? 'on' : 'off'}`;
+    scanButton.disabled = false;
+  }
+});
+
 const logButton = document.getElementById('logtoggle');
 logButton.addEventListener('click', () => {
   logging = !logging;
-  logButton.textContent = `Event log: ${logging ? 'on' : 'off'}`;
+  logButton.textContent = `Upload history: ${logging ? 'shown' : 'hidden'}`;
   log.hidden = !logging;
   if (!logging) log.textContent = '';
 });

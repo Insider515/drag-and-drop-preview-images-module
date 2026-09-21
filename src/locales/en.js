@@ -78,5 +78,8 @@ export default {
     'srv.NO_SPACE': 'No space left on the server',
     'srv.DENIED': 'Uploading is not allowed',
     'srv.INTERNAL': 'Internal server error',
+    'srv.INFECTED': 'The file was reported as malware',
+    'srv.NOT_SCREENED': 'The file could not be checked for malware',
+    'srv.SCAN_FAILED': 'The malware check is unavailable, try again',
   },
 };

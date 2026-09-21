@@ -24,12 +24,36 @@ const host = String(arg('host', '127.0.0.1'));
 const root = path.resolve(String(arg('root', path.join(here, '..', 'uploads'))));
 const useVite = arg('vite', false) === true;
 
-const upload = createUploadHandler({
+const shared = {
   root,
   basePath: '/api/upload',
   allowSvg: arg('svg', false) === true,
   onWarning: (message, detail) => console.warn(message, detail ?? ''),
+};
+
+const upload = createUploadHandler(shared);
+
+/**
+ * The same endpoint with screening turned on, so the demo's switch can show
+ * the difference rather than describe it.
+ *
+ * The check here is a *simulation*, not VirusTotal: a demo should not need an
+ * account and an API key to be tried, and it should not send anybody's
+ * pictures to a third party either. It reports a file as malware when its name
+ * contains "virus", which is enough to see what a refusal looks like. The real
+ * thing is `scan: { service: 'virustotal', apiKey }` — see the README.
+ */
+const uploadScreened = createUploadHandler({
+  ...shared,
+  scan: {
+    check: async ({ name }) => ({
+      verdict: /virus/i.test(name) ? 'malicious' : 'clean',
+      detail: { malicious: 42, suspicious: 0 },
+    }),
+  },
 });
+
+let screening = false;
 
 const TYPES = new Map(Object.entries({
   '.html': 'text/html; charset=utf-8',
@@ -71,8 +95,16 @@ if (useVite) {
 }
 
 const server = http.createServer(async (req, res) => {
+  // Demo-only: lets the page turn screening on and off. Nothing like this
+  // exists in the package.
+  if ((req.url ?? '').startsWith('/api/demo/scan')) {
+    screening = new URL(req.url, 'http://localhost').searchParams.get('on') === '1';
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ screening }));
+    return;
+  }
   if ((req.url ?? '').startsWith('/api/upload')) {
-    await upload(req, res);
+    await (screening ? uploadScreened : upload)(req, res);
     return;
   }
   if (vite) {

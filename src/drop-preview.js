@@ -1,3 +1,4 @@
+import { compressFile, normaliseCompress } from './core/compress.js';
 import { createTranslator, resolveLocale } from './core/i18n.js';
 import { DEFAULT_LOCALE, LOCALES } from './locales/index.js';
 import { buildThemeCss } from './core/theme.js';
@@ -37,6 +38,11 @@ export const DEFAULTS = {
   allowSvg: false,
   /** Ceilings; see DEFAULT_LIMITS. */
   limits: null,
+  /**
+   * Shrink pictures on the page before they are sent. Off unless set; see
+   * src/core/compress.js for what each setting does.
+   */
+  compress: null,
 
   /** Upload as soon as files are chosen, rather than on a button. */
   autoUpload: false,
@@ -78,6 +84,9 @@ export class DropPreview {
 
   #destroyed = false;
 
+  /** The batch still being decoded and shrunk, so an upload can wait for it. */
+  #adding = null;
+
   #busy = false;
 
   constructor(target, options = {}) {
@@ -86,6 +95,9 @@ export class DropPreview {
 
     this.options = { ...DEFAULTS, ...options };
     this.limits = { ...DEFAULT_LIMITS, ...(this.options.limits ?? {}) };
+    // Validated here rather than at upload time, so a typo in the options is a
+    // mistake the developer meets immediately.
+    this.compress = normaliseCompress(this.options.compress);
     this.host = host;
 
     this.locale = resolveLocale(this.options.locale, LOCALES, DEFAULT_LOCALE);
@@ -241,6 +253,20 @@ export class DropPreview {
    * @returns {Promise<{accepted: object[], rejected: object[]}>}
    */
   async add(files) {
+    // Held so `upload()` can wait: a file is queued before its preview has
+    // decoded and before it has been shrunk, and pressing Upload in that
+    // window would send the original bytes rather than the smaller ones.
+    const batch = this.#addBatch(files);
+    const previous = this.#adding;
+    this.#adding = previous ? previous.then(() => batch, () => batch) : batch;
+    try {
+      return await batch;
+    } finally {
+      if (this.#adding === batch) this.#adding = null;
+    }
+  }
+
+  async #addBatch(files) {
     const accepted = [];
     const rejected = [];
     const seen = new Set(this.#items.map((item) => item.key));
@@ -287,13 +313,14 @@ export class DropPreview {
     // large selection that is the whole wait, spent showing nothing.
     for (const item of accepted) {
       await this.#loadPreview(item);
+      await this.#shrink(item);
       this.#paintTile(item);
     }
 
     if (rejected.length) this.emit('rejected', { rejected });
     if (accepted.length) this.emit('change', { files: this.files });
     if (accepted.length && this.options.autoUpload && this.options.endpoint) {
-      await this.upload();
+      await this.#send();
     }
     return { accepted: accepted.map(publicItem), rejected };
   }
@@ -313,7 +340,9 @@ export class DropPreview {
       const size = await new Promise((resolve, reject) => {
         const image = new Image();
         image.addEventListener('load', () =>
-          resolve({ width: image.naturalWidth, height: image.naturalHeight }));
+          // The decoded picture is handed on: compression redraws exactly this,
+          // so nothing is decoded a second time.
+          resolve({ width: image.naturalWidth, height: image.naturalHeight, image }));
         image.addEventListener('error', () => reject(new Error('decode failed')));
         image.src = url;
       });
@@ -327,10 +356,48 @@ export class DropPreview {
       item.url = url;
       item.width = size.width;
       item.height = size.height;
+      item.image = size.image;
     } catch {
       this.#releaseUrl(url);
       item.status = 'error';
       item.error = { code: 'DECODE_FAILED', detail: null };
+    }
+  }
+
+  /**
+   * Replace a file with a smaller version of itself, when one is worth having.
+   *
+   * Shrinking is an optimisation, so every way it can go wrong ends with the
+   * original file being sent. Losing somebody's photograph because a canvas
+   * refused to encode it would be a far worse outcome than sending a few more
+   * kilobytes.
+   */
+  async #shrink(item) {
+    if (!this.compress || item.status === 'error' || !item.image) {
+      if (item) item.image = null;
+      return;
+    }
+    try {
+      const { file, changed } = await compressFile(item.file, {
+        image: item.image,
+        type: item.type,
+        width: item.width,
+        height: item.height,
+      }, this.compress);
+
+      if (changed) {
+        item.originalSize = item.file.size;
+        item.file = file;
+        // The hidden input is what a plain form submit carries, so it has to
+        // hold the smaller file too.
+        this.#syncInput();
+      }
+    } catch (err) {
+      this.emit('warning', { code: 'COMPRESS_FAILED', error: err, file: item.file });
+    } finally {
+      // The decoded picture is the largest thing here — several times the file
+      // on a big photograph. It has done its work.
+      item.image = null;
     }
   }
 
@@ -386,7 +453,22 @@ export class DropPreview {
    *   nothing to send or no endpoint configured
    */
   async upload() {
-    if (!this.options.endpoint || this.#items.length === 0 || this.#busy) return null;
+    if (!this.options.endpoint || this.#busy) return null;
+    // Whatever is still being decoded or shrunk belongs to this upload: a file
+    // is queued before its preview has decoded and before it has been shrunk,
+    // and sending it in that window would send the original bytes.
+    while (this.#adding) await this.#adding.catch(() => {});
+    if (this.#destroyed) return null;
+    return this.#send();
+  }
+
+  /**
+   * Send the queue. Called once nothing is still being prepared — directly by
+   * `autoUpload`, which runs at the end of a batch and would otherwise be
+   * waiting for the batch it is part of.
+   */
+  async #send() {
+    if (this.#items.length === 0 || this.#busy) return null;
 
     this.#busy = true;
     this.#controller = new AbortController();
@@ -442,11 +524,19 @@ export class DropPreview {
       // in error, so the next press of Upload found nothing to send and the
       // button appeared dead.
       const cancelled = code === 'ABORTED';
+      // When the server refused the whole batch it still named each file and
+      // its reason; those are better than one message repeated on every tile.
+      const named = new Map(
+        (err?.failures ?? []).map((failure) => [failure.name, failure])
+      );
       for (const item of sending) {
+        const own = named.get(item.file.name);
         item.status = cancelled ? 'ready' : 'error';
         item.error = cancelled
           ? null
-          : { code, detail: err instanceof UploadError ? err.params : null };
+          : own
+            ? { code: own.code ?? code, detail: own.params ?? null }
+            : { code, detail: err instanceof UploadError ? err.params : null };
       }
       this.#render();
       this.emit('error', { error: err, code, message: this.describeError(code, err) });
@@ -644,6 +734,8 @@ function publicItem(item) {
     type: item.type,
     width: item.width,
     height: item.height,
+    /** What it weighed before it was shrunk, when it was. */
+    originalSize: item.originalSize ?? item.file.size,
     status: item.status,
     error: item.error,
   };
