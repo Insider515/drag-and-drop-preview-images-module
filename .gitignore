@@ -1,1 +1,9 @@
-/preview
+node_modules/
+dist/
+demo-dist/
+
+# Where the demo server puts what you drop on it.
+uploads/
+
+*.log
+.DS_Store

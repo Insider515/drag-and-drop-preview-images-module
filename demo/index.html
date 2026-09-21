@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>drag-and-drop-preview-images-module — demo</title>
+    <style>
+      :root { color-scheme: light dark; --page-bg: #eef1f5; --page-fg: #1f2328; }
+      @media (prefers-color-scheme: dark) { :root { --page-bg: #0f1216; --page-fg: #e6e9ed; } }
+      body {
+        max-width: 860px; margin: 0 auto; padding: 32px 20px 64px;
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: var(--page-fg); background: var(--page-bg);
+      }
+      h1 { margin: 0 0 4px; font-size: 22px; }
+      p.lead { margin: 0 0 24px; opacity: 0.75; }
+      .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+      .controls button, .controls select {
+        padding: 7px 12px; font: inherit; color: inherit;
+        background: transparent; border: 1px solid currentColor; border-radius: 6px;
+        cursor: pointer; opacity: 0.8;
+      }
+      .controls button:hover { opacity: 1; }
+      pre#log {
+        margin-top: 24px; padding: 12px; min-height: 120px; max-height: 260px; overflow: auto;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: color-mix(in srgb, var(--page-fg) 6%, transparent); border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>drag-and-drop-preview-images-module</h1>
+    <p class="lead">
+      Drop images below, or click to choose. Every file is identified by its own bytes —
+      rename an executable to <code>.png</code> and it is still refused. The event log at the
+      bottom belongs to this page, not to the widget — it is not part of the package.
+    </p>
+
+    <div class="controls">
+      <select id="lang" aria-label="Language"></select>
+      <select id="scheme" aria-label="Colour scheme">
+        <option value="auto">Theme: auto</option>
+        <option value="light">Theme: light</option>
+        <option value="dark">Theme: dark</option>
+      </select>
+      <button id="palette" type="button">Custom palette: off</button>
+      <button id="svg" type="button">SVG: refused</button>
+      <button id="logtoggle" type="button">Event log: on</button>
+    </div>
+
+    <form id="form">
+      <div id="host"></div>
+    </form>
+
+    <pre id="log"></pre>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

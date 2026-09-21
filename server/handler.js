@@ -1,0 +1,319 @@
+import { createRequire } from 'node:module';
+
+import { UploadError } from './errors.js';
+import { createRouter } from './http.js';
+import { DEFAULT_LIMITS, UploadService } from './upload-service.js';
+
+const require = createRequire(import.meta.url);
+
+/**
+ * Multipart parsing is busboy's job, and it is the only runtime dependency.
+ *
+ * It is required lazily so that importing this module for `UploadService`
+ * alone — to do the storing from a framework that parses the body itself —
+ * works in a project that never installed it.
+ */
+let busboyModule = null;
+function loadBusboy() {
+  if (!busboyModule) busboyModule = require('busboy');
+  return busboyModule;
+}
+
+function selfOrigin(req) {
+  const host = req.get('host');
+  return host ? `${req.protocol}://${host}` : null;
+}
+
+/**
+ * Reject a state-changing request that a foreign page sent on the user's behalf.
+ *
+ * This matters more here than almost anywhere: `multipart/form-data` is a
+ * *simple* request, so it is not preflighted. A plain `<form>` on any site can
+ * post files into this endpoint under the user's session cookie, and the
+ * browser will send it without asking. Checking Origin is what closes that.
+ *
+ * A request with neither Origin nor Sec-Fetch-Site is not a browser form — it
+ * is curl, a server-to-server call, or a test — and is allowed through.
+ */
+function assertSameOrigin(req, allowedOrigins) {
+  if (allowedOrigins === false) return;
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return;
+
+  const site = req.get('sec-fetch-site');
+  if (site && site !== 'same-origin' && site !== 'none') {
+    throw new UploadError(403, 'CROSS_ORIGIN', 'Cross-origin request rejected');
+  }
+
+  const origin = req.get('origin');
+  if (!origin) return;
+
+  const allowed =
+    typeof allowedOrigins === 'function'
+      ? allowedOrigins(origin, req)
+      : Array.isArray(allowedOrigins)
+        ? allowedOrigins.includes(origin)
+        : origin === selfOrigin(req);
+
+  if (!allowed) {
+    // "null" arrives from sandboxed iframes and some redirect chains; it is
+    // not same-origin and must not be mistaken for absent.
+    throw new UploadError(403, 'CROSS_ORIGIN', 'Cross-origin request rejected');
+  }
+}
+
+/**
+ * Build the upload endpoint.
+ *
+ * The result is a plain `(req, res, next)` function over node's own objects —
+ * which is exactly what Express takes as middleware, and what any Node
+ * framework can hand its raw objects to:
+ *
+ *   app.use('/api/upload', createUploadHandler({ root: './uploads' }))
+ *
+ *   // AdonisJS, Fastify, Nest, bare node:http — same function
+ *   const files = createUploadHandler({ root: './uploads', basePath: '/api/upload' })
+ *   router.any('/api/upload/*', ({ request, response }) =>
+ *     files(request.request, response.response))
+ *
+ * @param {object} options
+ * @param {string} options.root the one directory files may land in
+ * @param {string} [options.basePath] prefix to strip when the host does not
+ *   rewrite `req.url` itself (Express does; Adonis and node:http do not)
+ * @param {string} [options.field] form field to read; `images[]` by default —
+ *   the same name the widget posts under
+ * @param {string[]} [options.accept] MIME types allowed
+ * @param {boolean} [options.allowSvg]
+ * @param {'rename'|'refuse'|'overwrite'} [options.onConflict]
+ * @param {object} [options.limits] see DEFAULT_LIMITS
+ * @param {number} [options.maxConcurrent] uploads in flight; beyond that, 503
+ * @param {string[]|((origin: string, req: object) => boolean)|false} [options.allowedOrigins]
+ * @param {(req: object, context: object) => (boolean|Promise<boolean>)} [options.authorize]
+ * @param {(name: string, meta: object) => string} [options.rename]
+ * @param {(message: string, detail?: unknown) => void} [options.onWarning]
+ * @returns {(req: object, res: object, next?: Function) => Promise<boolean>}
+ */
+export function createUploadHandler(options = {}) {
+  const service = new UploadService(options);
+  const limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
+  // The same default the widget posts under. They were different, and the
+  // two halves of one package then did not work together out of the box:
+  // the widget sent `images[]`, the handler read `files[]`, drained it and
+  // answered "no files were sent" after the whole body had gone over the wire.
+  const field = options.field ?? 'images[]';
+  const maxConcurrent = Math.max(1, options.maxConcurrent ?? 8);
+  const { allowedOrigins, authorize } = options;
+  const warn = (message, detail) => options.onWarning?.(message, detail);
+
+  // Started here so the directory exists before the first request, but its
+  // rejection is caught: an unhandled one takes the whole process down, and a
+  // root that cannot be created should fail the requests that need it, not
+  // everything else the host is doing.
+  let readyError = null;
+  const ready = service.init().catch((err) => {
+    readyError = err;
+    warn('Could not prepare the upload directory', err);
+  });
+  let inFlight = 0;
+
+  const router = createRouter({ basePath: options.basePath ?? '' });
+
+  router.use(async (req, _res, next) => {
+    await ready;
+    if (readyError) {
+      throw new UploadError(500, 'INTERNAL', 'The upload directory is not available');
+    }
+    assertSameOrigin(req, allowedOrigins);
+    next();
+  });
+
+  router.get('/config', async (_req, res) => {
+    res.json(service.capabilities());
+  });
+
+  router.post('/', (req, res) => handleUpload(req, res));
+  router.post('/upload', (req, res) => handleUpload(req, res));
+
+  async function handleUpload(req, res) {
+    if (inFlight >= maxConcurrent) {
+      throw new UploadError(503, 'BUSY', 'The server is busy with other uploads, try again');
+    }
+    const type = String(req.headers['content-type'] ?? '');
+    if (!type.includes('multipart/form-data')) {
+      throw new UploadError(400, 'NOT_MULTIPART', 'multipart/form-data was expected');
+    }
+    // Asked before the body is read, so a forbidden upload is refused without
+    // streaming megabytes to a server that will reject them.
+    if (authorize && !(await authorize(req, { route: '/upload' }))) {
+      throw new UploadError(403, 'DENIED', 'Uploading is not allowed');
+    }
+
+    inFlight += 1;
+    try {
+      const result = await readMultipart(req);
+      const status = result.uploaded.length === 0 && result.failures.length > 0 ? 400 : 200;
+      res.status(status).json(result);
+    } finally {
+      inFlight -= 1;
+    }
+  }
+
+  /**
+   * Read the body, storing each file as it arrives.
+   *
+   * Files are stored one at a time on purpose. Parsing them in parallel would
+   * hold several whole uploads in flight against the same disk and the same
+   * free-space check, and the limit that matters — the total for the request —
+   * could only be enforced after the fact.
+   */
+  function readMultipart(req) {
+    const Busboy = loadBusboy();
+    return new Promise((resolve, reject) => {
+      const uploaded = [];
+      const failures = [];
+      const fields = {};
+      let total = 0;
+      let count = 0;
+      let settled = false;
+      let pending = Promise.resolve();
+      /** Parts still being read, so an abort can put an end to them. */
+      const live = new Set();
+
+      const bus = Busboy({
+        headers: req.headers,
+        limits: {
+          files: limits.maxFiles + 1, // one over, so the extra can be reported
+          // One byte over our own cap, so our check refuses the file with a
+          // reason before busboy silently truncates it. Busboy's limit stays
+          // as the backstop for a stream that gets past us somehow.
+          fileSize: limits.maxFileSize + 1,
+          fields: 32,
+        },
+      });
+
+      const settle = (err) => {
+        if (settled) return;
+        settled = true;
+        req.unpipe?.(bus);
+        if (err) {
+          // A request that dies mid-part leaves busboy silent: the part stream
+          // gets no 'end', no 'error' and no 'close'. Whoever is storing it
+          // then waits for ever, holding an open file its temp copy is
+          // written to — one abandoned file per aborted upload, which a client
+          // can repeat until the disk is full. Ending the part here is what
+          // lets the storing half notice and clean up after itself.
+          for (const part of live) part.destroy(err);
+          live.clear();
+          reject(err);
+        } else {
+          resolve({ uploaded, failures, fields });
+        }
+      };
+
+      req.on('aborted', () => settle(new UploadError(400, 'ABORTED', 'The upload was aborted')));
+
+      bus.on('field', (name, value) => {
+        if (typeof value === 'string' && value.length <= 4096) fields[name] = value;
+      });
+
+      bus.on('file', (name, stream, info) => {
+        // A field this endpoint was not asked to read is drained rather than
+        // stored: leaving it unread stalls the parser.
+        if (name !== field) {
+          stream.resume();
+          return;
+        }
+        // Stopped the instant it is handed over. Storing happens one file at
+        // a time, so this part may wait a while for its turn — and a flowing
+        // stream with nobody reading it loses its leading bytes, which is how
+        // an over-sized file arrived truncated and counted as stored.
+        stream.pause();
+        live.add(stream);
+        stream.once('close', () => live.delete(stream));
+
+        count += 1;
+        if (count > limits.maxFiles) {
+          failures.push({
+            name: info.filename,
+            code: 'TOO_MANY',
+            error: `At most ${limits.maxFiles} files`,
+            params: { limit: limits.maxFiles },
+          });
+          stream.resume();
+          return;
+        }
+
+        pending = pending.then(async () => {
+          if (settled) {
+            stream.resume();
+            return;
+          }
+          try {
+            // The budget left for the whole request is handed down, so a file
+            // that would exceed it is stopped while it streams. Checking the
+            // total afterwards looked equivalent and was not: the file that
+            // went over had already been renamed into place, and the limit
+            // refused it while leaving it on disk.
+            const stored = await service.store(info.filename, stream, {
+              maxBytes: Math.max(0, limits.maxRequestSize - total),
+            });
+            total += stored.size;
+            uploaded.push({
+              name: stored.name,
+              original: info.filename,
+              size: stored.size,
+              type: stored.type,
+            });
+          } catch (err) {
+            // One bad file does not fail the batch: the client is told which
+            // ones did not make it, and why, and keeps the rest.
+            const known = err instanceof UploadError;
+            if (!known) warn('Upload failed', err);
+            failures.push({
+              name: info.filename,
+              code: known ? err.code : 'INTERNAL',
+              error: known ? err.message : 'Could not store the file',
+              params: known ? err.params : null,
+            });
+            stream.resume();
+          }
+        });
+      });
+
+      bus.on('error', (err) => settle(err instanceof UploadError ? err : new UploadError(400, 'INVALID_BODY', 'The request body could not be read')));
+      bus.on('close', () => {
+        pending.then(() => {
+          if (uploaded.length === 0 && failures.length === 0) {
+            settle(new UploadError(400, 'NO_FILES', 'No files were sent'));
+            return;
+          }
+          settle(null);
+        }, settle);
+      });
+
+      req.pipe(bus);
+    });
+  }
+
+  // Keeps FsError-shaped messages, hides everything else behind a generic one.
+  router.use((err, _req, res, _next) => {
+    if (res.headersSent) {
+      res.destroy?.();
+      return;
+    }
+    if (err instanceof UploadError) {
+      res.status(err.status).json({
+        error: err.message,
+        code: err.code,
+        ...(err.params ? { params: err.params } : {}),
+      });
+      return;
+    }
+    warn('Unhandled upload error', err);
+    res.status(500).json({ error: 'Internal server error', code: 'INTERNAL' });
+  });
+
+  router.service = service;
+  return router;
+}
+
+export default createUploadHandler;

@@ -1,0 +1,375 @@
+/**
+ * Every colour and measurement is a custom property on `.ddp`.
+ *
+ * That is what makes the `theme` option possible: it emits a small scoped
+ * stylesheet that redefines these, and nothing else in here has to know. The
+ * dark theme follows `prefers-color-scheme` unless a class forces it — and a
+ * host that wants to force it must add `ddp-light` or `ddp-dark`, never remove
+ * one, because removing hands control back to the system and a light theme
+ * could then never be chosen on a machine set to dark.
+ */
+
+.ddp {
+  --ddp-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif;
+  --ddp-font-size: 14px;
+
+  --ddp-bg: #ffffff;
+  --ddp-bg-subtle: #f7f8fa;
+  --ddp-bg-sunken: #eef0f4;
+  --ddp-border: #dfe3e8;
+  --ddp-border-strong: #c4cad2;
+
+  --ddp-text: #1f2328;
+  --ddp-text-muted: #656d76;
+
+  --ddp-accent: #4568dc;
+  --ddp-accent-hover: #3452b8;
+  --ddp-accent-soft: #eaefff;
+  --ddp-accent-contrast: #ffffff;
+
+  --ddp-danger: #d93025;
+  --ddp-danger-hover: #b3271d;
+  --ddp-success: #188038;
+  --ddp-warning: #b26a00;
+
+  --ddp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --ddp-overlay: rgba(0, 0, 0, 0.45);
+
+  --ddp-radius: 6px;
+  --ddp-radius-lg: 10px;
+  --ddp-tile-size: 120px;
+  --ddp-gap: 12px;
+  --ddp-drop-height: 132px;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--ddp-gap);
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--ddp-font);
+  font-size: var(--ddp-font-size);
+  line-height: 1.45;
+  color: var(--ddp-text);
+  /* Breakpoints below are keyed to the widget's own width, not the viewport's:
+     an embedded drop zone may sit in a narrow column on a wide screen. */
+  container-type: inline-size;
+  container-name: ddp;
+}
+
+.ddp *,
+.ddp *::before,
+.ddp *::after {
+  box-sizing: border-box;
+}
+
+.ddp [hidden] {
+  display: none !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ddp:not(.ddp-light) {
+    --ddp-bg: #16191d;
+    --ddp-bg-subtle: #1c2024;
+    --ddp-bg-sunken: #212529;
+    --ddp-border: #2f353c;
+    --ddp-border-strong: #434a52;
+
+    --ddp-text: #e6e9ed;
+    --ddp-text-muted: #9aa4af;
+
+    /* Lifted well above the light theme's blue: at #4568dc on #16191d the
+       contrast is 2.8:1, under the 4.5:1 a control needs to be readable. */
+    --ddp-accent: #8ba6ff;
+    --ddp-accent-hover: #a7bcff;
+    --ddp-accent-soft: #1e2a4d;
+    --ddp-accent-contrast: #10131a;
+
+    --ddp-danger: #f16a5f;
+    --ddp-danger-hover: #f78a80;
+    --ddp-success: #5fc27e;
+    --ddp-warning: #f0b608;
+
+    --ddp-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.45);
+    --ddp-overlay: rgba(0, 0, 0, 0.6);
+  }
+}
+
+.ddp.ddp-dark {
+  --ddp-bg: #16191d;
+  --ddp-bg-subtle: #1c2024;
+  --ddp-bg-sunken: #212529;
+  --ddp-border: #2f353c;
+  --ddp-border-strong: #434a52;
+  --ddp-text: #e6e9ed;
+  --ddp-text-muted: #9aa4af;
+  --ddp-accent: #8ba6ff;
+  --ddp-accent-hover: #a7bcff;
+  --ddp-accent-soft: #1e2a4d;
+  --ddp-accent-contrast: #10131a;
+  --ddp-danger: #f16a5f;
+  --ddp-danger-hover: #f78a80;
+  --ddp-success: #5fc27e;
+  --ddp-warning: #f0b608;
+  --ddp-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.45);
+  --ddp-overlay: rgba(0, 0, 0, 0.6);
+}
+
+/* ------------------------------------------------------------- drop zone */
+
+.ddp-zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--ddp-drop-height);
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--ddp-bg-subtle);
+  border: 2px dashed var(--ddp-border-strong);
+  border-radius: var(--ddp-radius-lg);
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.ddp-zone:hover,
+.ddp-zone.is-active {
+  background: var(--ddp-accent-soft);
+  border-color: var(--ddp-accent);
+}
+
+/* The input covers the zone so a drop anywhere on it counts, and stays
+   focusable for the keyboard rather than being hidden with display:none. */
+.ddp-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ddp-input:focus-visible {
+  outline: none;
+}
+
+.ddp-zone:has(.ddp-input:focus-visible) {
+  outline: 2px solid var(--ddp-accent);
+  outline-offset: 2px;
+}
+
+.ddp-fake-btn {
+  padding: 8px 18px;
+  font-weight: 600;
+  color: var(--ddp-accent-contrast);
+  background: var(--ddp-accent);
+  border-radius: var(--ddp-radius);
+}
+
+.ddp-msg {
+  color: var(--ddp-text-muted);
+}
+
+/* ---------------------------------------------------------------- status */
+
+.ddp-status {
+  margin: 0;
+  color: var(--ddp-text-muted);
+}
+
+.ddp-status:empty {
+  display: none;
+}
+
+.ddp-progress {
+  height: 6px;
+  overflow: hidden;
+  background: var(--ddp-bg-sunken);
+  border-radius: 999px;
+}
+
+.ddp-progress-bar {
+  width: 0;
+  height: 100%;
+  background: var(--ddp-accent);
+  transition: width 0.15s;
+}
+
+/* -------------------------------------------------------------- previews */
+
+.ddp-previews {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--ddp-tile-size), 1fr));
+  gap: var(--ddp-gap);
+}
+
+.ddp-previews:empty {
+  display: none;
+}
+
+.ddp-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ddp-thumb-wrap {
+  position: relative;
+}
+
+.ddp-thumb {
+  aspect-ratio: 1;
+  background-color: var(--ddp-bg-sunken);
+  background-position: center;
+  background-size: cover;
+  border: 1px solid var(--ddp-border);
+  border-radius: var(--ddp-radius);
+}
+
+.ddp-thumb.is-error {
+  border-color: var(--ddp-danger);
+  border-style: dashed;
+}
+
+.ddp-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 28px is the smallest comfortable target for a pointer; on a touch screen
+     the rule below takes it to 44, which is what Apple and Google ask for. */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: #fff;
+  cursor: pointer;
+  background: var(--ddp-overlay);
+  border: none;
+  border-radius: 50%;
+}
+
+.ddp-remove:hover:not(:disabled) {
+  background: var(--ddp-danger);
+}
+
+.ddp-remove:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.ddp-name,
+.ddp-size {
+  overflow: hidden;
+  font-size: 0.85em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ddp-name {
+  color: var(--ddp-text);
+}
+
+.ddp-size {
+  color: var(--ddp-text-muted);
+}
+
+.ddp-size.is-error {
+  color: var(--ddp-danger);
+  white-space: normal;
+}
+
+.ddp-tile[data-status='done'] .ddp-thumb {
+  border-color: var(--ddp-success);
+}
+
+.ddp-tile[data-status='uploading'] .ddp-thumb {
+  opacity: 0.55;
+}
+
+/* --------------------------------------------------------------- actions */
+
+.ddp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ddp-actions:empty,
+.ddp.is-empty .ddp-actions {
+  display: none;
+}
+
+.ddp-btn {
+  padding: 8px 16px;
+  font: inherit;
+  color: var(--ddp-text);
+  cursor: pointer;
+  background: var(--ddp-bg);
+  border: 1px solid var(--ddp-border-strong);
+  border-radius: var(--ddp-radius);
+}
+
+.ddp-btn:hover:not(:disabled) {
+  border-color: var(--ddp-accent);
+}
+
+.ddp-btn:focus-visible {
+  outline: 2px solid var(--ddp-accent);
+  outline-offset: 1px;
+}
+
+.ddp-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ddp-btn-primary {
+  color: var(--ddp-accent-contrast);
+  background: var(--ddp-accent);
+  border-color: var(--ddp-accent);
+}
+
+.ddp-btn-primary:hover:not(:disabled) {
+  background: var(--ddp-accent-hover);
+  border-color: var(--ddp-accent-hover);
+}
+
+/* ------------------------------------------------------- touch and narrow */
+
+@media (pointer: coarse) {
+  .ddp-remove {
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+  }
+
+  .ddp-btn {
+    min-height: 44px;
+  }
+}
+
+@container ddp (max-width: 420px) {
+  .ddp {
+    --ddp-tile-size: 96px;
+    --ddp-gap: 8px;
+  }
+
+  .ddp-actions .ddp-btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ddp *,
+  .ddp *::before,
+  .ddp *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

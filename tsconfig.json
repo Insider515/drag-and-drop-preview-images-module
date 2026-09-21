@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "drag-and-drop-preview-images-module": [
+        "./types/index.d.ts"
+      ],
+      "drag-and-drop-preview-images-module/server": [
+        "./types/server.d.ts"
+      ]
+    },
+    "baseUrl": "."
+  },
+  "include": [
+    "types/**/*.d.ts",
+    "test/types/**/*.ts"
+  ]
+}

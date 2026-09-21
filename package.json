@@ -1,0 +1,59 @@
+{
+  "name": "drag-and-drop-preview-images-module",
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Embeddable image drop zone: a dependency-free widget with previews and a framework-free Node upload handler",
+  "keywords": [
+    "drag-and-drop", "dropzone", "drop-zone", "file-upload", "image-upload",
+    "upload", "uploader", "preview", "image-preview", "thumbnail",
+    "file", "files", "images", "widget", "component", "ui", "frontend",
+    "vanilla-js", "no-dependencies", "node", "nodejs", "express",
+    "express-middleware", "adonisjs", "fastify", "nestjs",
+    "multipart", "form-data", "i18n", "typescript", "dark-mode"
+  ],
+  "homepage": "https://github.com/Insider515/drag-and-drop-preview-images-module#readme",
+  "bugs": { "url": "https://github.com/Insider515/drag-and-drop-preview-images-module/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Insider515/drag-and-drop-preview-images-module.git"
+  },
+  "author": "Mykhailo Kravtsov <117070894+Insider515@users.noreply.github.com>",
+  "license": "MIT",
+  "main": "./dist/drop-preview.umd.cjs",
+  "module": "./dist/drop-preview.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/drop-preview.js",
+      "require": "./dist/drop-preview.umd.cjs"
+    },
+    "./style.css": "./dist/drop-preview.css",
+    "./server": {
+      "types": "./types/server.d.ts",
+      "import": "./server/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": { "*": { "server": ["./types/server.d.ts"] } },
+  "files": ["dist", "types", "server", "!server/standalone.js", "LICENSE", "README.md"],
+  "sideEffects": ["**/*.css"],
+  "scripts": {
+    "dev": "node server/standalone.js --vite",
+    "build": "vite build",
+    "build:demo": "vite build --mode demo",
+    "serve": "node server/standalone.js",
+    "start": "npm run build:demo && node server/standalone.js",
+    "test": "node --test test/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm test && npm run typecheck"
+  },
+  "dependencies": { "busboy": "^1.6.0" },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "express": "^4.21.2",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.11"
+  },
+  "engines": { "node": ">=18" }
+}

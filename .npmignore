@@ -1,0 +1,11 @@
+# package.json "files" already whitelists what ships (dist, types, server,
+# README). This file only guards against a stray include.
+demo/
+demo-dist/
+docs/
+test/
+uploads/
+vite.config.js
+tsconfig.json
+*.log
+.DS_Store
