@@ -234,6 +234,32 @@
   border-style: dashed;
 }
 
+/*
+ * The bar over one thumbnail. Only while that file is actually going out:
+ * a bar sitting at nothing under every tile is furniture, not information.
+ */
+.ddp-tile-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  background: var(--ddp-overlay);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ddp-tile[data-status='uploading'] .ddp-tile-progress {
+  opacity: 1;
+}
+
+.ddp-tile-progress-bar {
+  width: 0;
+  height: 100%;
+  background: var(--ddp-accent);
+  transition: width 120ms linear;
+}
+
 .ddp-remove {
   position: absolute;
   top: 4px;

@@ -744,6 +744,7 @@ export class DropPreview {
       for (const item of group) {
         item.status = 'uploading';
         item.error = null;
+        item.progress = 0;
       }
       this.#render();
     }
@@ -768,9 +769,12 @@ export class DropPreview {
         signal: this.#controller.signal,
         // The bar measures the whole queue, not the request in flight: with a
         // file per request it would otherwise jump back to nothing on each one.
-        onProgress: (sent, total) => (totalBytes
-          ? this.#setProgress(sentBefore + (total ? (sent / total) * groupBytes : 0), totalBytes)
-          : this.#setProgress(sent, total)),
+        onProgress: (sent, total) => {
+          const fraction = total ? sent / total : 0;
+          this.#spreadProgress(sending, fraction);
+          if (totalBytes) this.#setProgress(sentBefore + fraction * groupBytes, totalBytes);
+          else this.#setProgress(sent, total);
+        },
       });
 
       // The server decides what actually landed; a file it refused is marked
@@ -782,6 +786,7 @@ export class DropPreview {
         const failure = failures.get(item.file.name);
         item.status = failure ? 'error' : 'done';
         item.error = failure ? { code: failure.code ?? 'INTERNAL', detail: failure.params ?? null } : null;
+        item.progress = failure ? 0 : 1;
       }
       this.#render();
       return { done: true, answer, error: null, code: null, status: 0, cancelled: false };
@@ -800,6 +805,9 @@ export class DropPreview {
       for (const item of sending) {
         const own = named.get(item.file.name);
         item.status = cancelled ? 'ready' : 'error';
+        // Whatever went out is not coming back; the next attempt starts the
+        // file again, so showing it part-done would be a lie.
+        item.progress = 0;
         item.error = cancelled
           ? null
           : own
@@ -967,7 +975,17 @@ export class DropPreview {
       dataset: { status: item.status },
       title: item.file.name,
     }, [
-      el('div.ddp-thumb-wrap', {}, [thumb, remove]),
+      // Its own bar, over the thumbnail. The one below the zone measures the
+      // whole queue; this says how far this particular file has got, which is
+      // the question a person asks when one photograph is much larger than
+      // the rest of them.
+      el('div.ddp-thumb-wrap', {}, [
+        thumb,
+        remove,
+        el('div.ddp-tile-progress', {}, [
+          el('div.ddp-tile-progress-bar', { style: { width: `${Math.round((item.progress ?? 0) * 100)}%` } }),
+        ]),
+      ]),
       el('span.ddp-name', { text: item.file.name }),
       el('span.ddp-size', { class: item.error ? 'is-error' : '', text: caption }),
     ]);
@@ -983,11 +1001,41 @@ export class DropPreview {
    * quadratic in the size of the queue, and for a long queue that cost lands
    * exactly when the queue is longest.
    */
+  /**
+   * Move one tile's bar, and nothing else.
+   *
+   * Separate from #paintTile because progress arrives many times a second and
+   * rewriting a caption and re-deciding a class each time is work for nothing.
+   */
+  #paintProgress(item) {
+    const bar = this.#tiles.get(item.id)?.querySelector('.ddp-tile-progress-bar');
+    if (bar) bar.style.width = `${Math.round((item.progress ?? 0) * 100)}%`;
+  }
+
+  /**
+   * Share one request's progress out among the files it is carrying.
+   *
+   * A multipart body sends its parts in order, so the bytes that have gone
+   * out belong to the files in order too. With one file per request — the
+   * default — this is exact; with several it is the closest thing to the
+   * truth available without the browser telling us which part it is on.
+   */
+  #spreadProgress(group, fraction) {
+    let left = fraction * group.reduce((sum, item) => sum + item.file.size, 0);
+    for (const item of group) {
+      const size = item.file.size || 1;
+      item.progress = Math.max(0, Math.min(1, left / size));
+      left -= size;
+      this.#paintProgress(item);
+    }
+  }
+
   #paintTile(item) {
     const tile = this.#tiles.get(item.id);
     if (!tile) return;
 
     tile.dataset.status = item.status;
+    this.#paintProgress(item);
 
     const thumb = tile.querySelector('.ddp-thumb');
     if (item.url) thumb.style.backgroundImage = `url("${item.url}")`;
@@ -1083,6 +1131,8 @@ function publicItem(item) {
     height: item.height,
     /** What it weighed before it was shrunk, when it was. */
     originalSize: item.originalSize ?? item.file.size,
+    /** How much of this file has gone out, 0 to 1. */
+    progress: item.progress ?? 0,
     status: item.status,
     error: item.error,
   };

@@ -130,7 +130,7 @@ app.listen(3000);
 | Camera | A Take a photo button on a phone, without giving up the gallery |
 | Identification | The type is read from the file's leading bytes, never from the extension |
 | Limits | Per file, per queue, file count, and decoded pixels |
-| Upload | Progress and cancellation, or none at all if you keep it a form field |
+| Upload | Progress for the queue and for each file, cancellation, or none at all if you keep it a form field |
 | Languages | Five shipped; your own is an object with a dictionary |
 | Themes | Light and dark, following the system or forced; every colour a CSS variable |
 | Two on one page | Nothing is registered globally, so instances do not interfere |
@@ -642,6 +642,38 @@ The progress bar measures the whole queue rather than the request in flight — 
 would snap back to nothing on every file — and the status line counts files, not requests:
 "Uploading 3 of 20".
 
+### Two bars, and what each one means
+
+The bar under the drop zone measures **the whole queue**. The thin bar across the bottom of
+a thumbnail measures **that file**, and appears only while that file is actually going out —
+a bar sitting at nothing under every tile is furniture, not information.
+
+```
+[███████░░░]  the queue: four files, one of them done
+  ┌──────┐
+  │      │
+  │ ███░ │    this file: 60% of it has gone
+  └──────┘
+```
+
+With one file per request — the default — the tile's figure is exact. With several in one
+request the bytes are shared out in the order they are sent, which is the order a multipart
+body puts them in; it is the closest thing to the truth available without the browser
+saying which part it is on.
+
+A file that arrives is shown full and stays full. A file that fails goes back to empty,
+including one the server refused inside an otherwise successful request: whatever went out
+is not coming back, and the next attempt starts it again, so a part-filled bar would be a
+lie.
+
+Each file's own figure is on the queue as well:
+
+```js
+drop.on('change', ({ files }) => {
+  for (const f of files) console.log(f.name, Math.round(f.progress * 100) + '%');
+});
+```
+
 ### The button, and doing it yourself
 
 A **Retry** button appears beside Upload once something has failed for a reason worth
@@ -954,7 +986,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 459 tests
+npm test             # 472 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

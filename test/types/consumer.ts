@@ -210,3 +210,13 @@ new DropPreview('#images', { endpoint: '/upload', filesPerRequest: 0 });
 new DropPreview('#images', { paste: true, camera: 'auto', capture: 'environment' });
 new DropPreview('#images', { paste: 'document', camera: true, capture: 'user' });
 new DropPreview('#images', { paste: false, camera: false });
+
+// --- per-file progress ----------------------------------------------------
+const watched = new DropPreview('#images', { endpoint: '/upload' });
+watched.on('change', ({ files }) => {
+  for (const file of files) {
+    const percent = Math.round(file.progress * 100);
+    const saved = file.originalSize - file.size;
+    console.log(`${file.name}: ${percent}%, saved ${saved} bytes`);
+  }
+});

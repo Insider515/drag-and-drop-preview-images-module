@@ -151,6 +151,10 @@ export interface QueuedFile {
   height: number;
   status: 'ready' | 'uploading' | 'done' | 'error';
   error: { code: string; detail: Record<string, unknown> | null } | null;
+  /** What it weighed before it was shrunk, or its size when it was not. */
+  originalSize: number;
+  /** How much of this file has gone out, 0 to 1. */
+  progress: number;
 }
 
 export interface Rejection {
