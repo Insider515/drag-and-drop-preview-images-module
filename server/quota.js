@@ -46,8 +46,21 @@ export function normaliseQuota(raw) {
  * @param {() => number} [now] for tests, which cannot wait a minute
  */
 export function createQuota(config, now = Date.now) {
-  /** key -> [{ at, bytes }] */
+  /** key -> [{ at, bytes, id }] */
   const seen = new Map();
+  let nextId = 0;
+  let sinceSweep = 0;
+
+  /**
+   * How often to look for clients whose window has passed.
+   *
+   * Pruning only what a returning client touches leaves everyone who came once
+   * and never came back — on a public endpoint keyed by address, that is a map
+   * that grows for as long as the process runs. Measured before this: a
+   * thousand one-off visitors left a thousand entries, and a request from
+   * somebody else cleared none of them.
+   */
+  const SWEEP_EVERY = 100;
 
   const prune = (key) => {
     const cutoff = now() - config.windowMs;
@@ -73,16 +86,69 @@ export function createQuota(config, now = Date.now) {
 
     /** Whether one more file of this size fits. */
     allows(key, bytes) {
+      this.tick();
       const spent = this.spent(key);
       if (config.files && spent.files + 1 > config.files) return false;
       if (config.bytes && spent.bytes + bytes > config.bytes) return false;
       return true;
     },
 
-    /** Record one that did. */
-    take(key, bytes) {
+    /**
+     * Claim a place before the work starts.
+     *
+     * Checking and then recording once the file is stored is a race, and not a
+     * theoretical one: eight requests sent at once all passed a limit of three,
+     * because each of them looked before any of them had written anything. A
+     * budget is only a budget if the claim happens at the moment of asking.
+     *
+     * @param {number} bytes the size claimed, corrected by {@link settle}
+     * @returns {object|null} a handle to settle or release, or null when full
+     */
+    reserve(key, bytes) {
+      if (!this.allows(key, bytes)) return null;
+
+      const id = (nextId += 1);
       const events = seen.get(key) ?? [];
-      events.push({ at: now(), bytes });
+      events.push({ at: now(), bytes, id });
+      seen.set(key, events);
+      return { key, id };
+    },
+
+    /** Correct a claim to what the file actually weighed. */
+    settle(handle, bytes) {
+      if (!handle) return;
+      const event = (seen.get(handle.key) ?? []).find((one) => one.id === handle.id);
+      if (event) event.bytes = bytes;
+    },
+
+    /** Give a claim back, for a request that stored nothing. */
+    release(handle) {
+      if (!handle) return;
+      const events = seen.get(handle.key);
+      if (!events) return;
+      const at = events.findIndex((one) => one.id === handle.id);
+      if (at !== -1) events.splice(at, 1);
+      if (events.length === 0) seen.delete(handle.key);
+    },
+
+    /**
+     * Count towards the next sweep.
+     *
+     * On every question asked of the tally, not only on every claim: a client
+     * refused at the door never reaches a claim, and if nothing else swept,
+     * an endpoint being hammered would keep every address it ever saw.
+     */
+    tick() {
+      if ((sinceSweep += 1) < SWEEP_EVERY) return;
+      sinceSweep = 0;
+      this.sweep();
+    },
+
+    /** Record one directly, for a caller that has nothing to reserve against. */
+    take(key, bytes) {
+      this.tick();
+      const events = seen.get(key) ?? [];
+      events.push({ at: now(), bytes, id: (nextId += 1) });
       seen.set(key, events);
     },
 

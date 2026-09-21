@@ -191,3 +191,76 @@ describe('quota: over HTTP, one file to a request', () => {
     assert.equal(await count(), 5);
   });
 });
+
+describe('quota: claiming a place, rather than checking for one', () => {
+  test('requests sent at once do not all pass the same limit', async () => {
+    // Measured before the claim moved to the moment of asking: eight at once
+    // all passed a limit of three, because each looked before any had written.
+    const { base, count } = await endpoint({ limits: { perClient: { files: 3 } } });
+
+    const statuses = await Promise.all(Array.from({ length: 8 }, (_, i) => {
+      const form = new FormData();
+      form.append('images[]', new Blob([png(32 * 1024)]), `c${i}.png`);
+      return fetch(base, { method: 'POST', body: form }).then((r) => r.status);
+    }));
+
+    const accepted = statuses.filter((s) => s === 200).length;
+    assert.equal(accepted, 3, `${accepted} of eight got through a limit of three`);
+    assert.equal(await count(), 3);
+    assert.ok(statuses.includes(429), 'the rest were refused with something other than 429');
+  });
+
+  test('a file that fails gives its place back', async () => {
+    // Otherwise a refusal spends the budget of the person it refused.
+    const { base, count } = await endpoint({ limits: { perClient: { files: 2 } } });
+
+    const bad = new FormData();
+    bad.append('images[]', new Blob([Buffer.from('#!/bin/sh')]), 'evil.png');
+    const refused = await (await fetch(base, { method: 'POST', body: bad })).json();
+    assert.equal(refused.failures[0].code, 'NOT_AN_IMAGE');
+
+    // The budget is untouched: two good files still fit.
+    assert.equal((await upload(base, 'a.png')).status, 200);
+    assert.equal((await upload(base, 'b.png')).status, 200);
+    assert.equal(await count(), 2);
+  });
+
+  test('the byte count is corrected to what the file weighed', async () => {
+    const { base } = await endpoint({ limits: { perClient: { bytes: 12 * 1024 } } });
+
+    // Two files of 4 KB each leave room for a third; a claim that was never
+    // corrected would have counted each request's whole multipart envelope.
+    assert.equal((await upload(base, 'a.png', 4 * 1024)).status, 200);
+    assert.equal((await upload(base, 'b.png', 4 * 1024)).status, 200);
+    assert.equal((await upload(base, 'c.png', 2 * 1024)).status, 200);
+  });
+});
+
+describe('quota: the tally does not grow for ever', () => {
+  test('clients whose window has passed are forgotten without being asked', () => {
+    // Pruning only what a returning client touches leaves everyone who came
+    // once and never came back. Measured: a thousand one-off visitors left a
+    // thousand entries, and a request from somebody else cleared none.
+    let clock = 0;
+    const quota = createQuota(normaliseQuota({ files: 5, windowMs: 1000 }), () => clock);
+
+    for (let i = 0; i < 1000; i += 1) {
+      clock += 10;
+      quota.reserve(`address:10.0.0.${i}`, 100);
+    }
+    clock += 10_000;
+    quota.allows('address:10.1.1.1', 1);
+
+    assert.ok(quota.size < 200, `${quota.size} entries left for a thousand one-off visitors`);
+  });
+
+  test('a client still inside the window is not forgotten', () => {
+    let clock = 0;
+    const quota = createQuota(normaliseQuota({ files: 5, windowMs: 10_000 }), () => clock);
+    quota.reserve('anna', 100);
+    for (let i = 0; i < 300; i += 1) quota.allows(`other-${i}`, 1);
+
+    assert.deepEqual(quota.spent('anna'), { files: 1, bytes: 100 },
+      'a live tally was swept away with the dead ones');
+  });
+});

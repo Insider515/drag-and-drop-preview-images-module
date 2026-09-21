@@ -1008,9 +1008,17 @@ used only for the early answer — under-reporting loses them nothing but that, 
 budget caps the file again while its bytes are read. A batch that runs out part-way keeps
 what landed and marks the rest `QUOTA`.
 
+**The place is claimed when the file is about to be stored**, not checked and recorded
+afterwards. Checking first and recording later is a race, and not a theoretical one: eight
+requests sent at once all passed a limit of three, because each looked before any had
+written anything. A file that then fails gives its place back rather than spending the
+budget of the person it refused.
+
 **In this process's memory.** Behind two instances each keeps its own count, so the real
 ceiling is the figure multiplied by however many are running. Something shared is a job for
-a store this package does not have and will not grow.
+a store this package does not have and will not grow. Clients whose window has passed are
+forgotten as the tally is used, so the map stays bounded without a timer holding the
+process open.
 
 ---
 
@@ -1226,7 +1234,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 553 tests
+npm test             # 558 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

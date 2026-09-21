@@ -61,6 +61,11 @@ Everything below has landed on `master` and is not yet published to npm.
 - `move()` reordered the queue during an upload although the drag and the keyboard both
   refuse then, so the order on screen could drift from the order files were going out in.
 - A line in the storage path that could never run.
+- The per-client cap did not hold when requests arrived at once — eight sent together all
+  passed a limit of three, because each checked before any had recorded anything. The place
+  is now claimed at the moment of asking, and given back by a file that does not land.
+- The tally kept every client it had ever seen: pruning only happened for a key that came
+  back, so a thousand one-off visitors left a thousand entries for good.
 
 ## 2.0.0
 

@@ -186,11 +186,18 @@ export function createUploadHandler(options = {}) {
     const identity = sessions ? await resolveIdentity(req) : null;
 
     const budgetKey = quota ? clientKey(req, identity) : null;
+    // Claimed now, not once the files are stored. Checking and then recording
+    // later is a race, and not a theoretical one: eight requests sent at once
+    // all passed a limit of three, because each looked before any had written.
+    //
+    // Content-Length is the client's own claim, so it is only the size of the
+    // claim: under-reporting gets them a smaller reservation, and the budget
+    // is enforced again while the bytes are actually read.
     if (quota) {
-      // Content-Length is the client's own claim, so it is used only to refuse
-      // early: under-reporting loses them nothing but the early answer, since
-      // the budget is enforced again while the bytes are read. Over-reporting
-      // refuses them on their own figure.
+      // A cheap early answer, so a body that has no budget to land in is not
+      // read at all. Content-Length is the client's own claim, so this is only
+      // the early answer — the place is claimed per file below, which is where
+      // it has to be if the count is to hold under requests sent at once.
       const declared = Number(req.headers['content-length']);
       const asking = Number.isFinite(declared) && declared > 0 ? declared : 0;
       if (!quota.allows(budgetKey, asking)) {
@@ -341,10 +348,15 @@ export function createUploadHandler(options = {}) {
             stream.resume();
             return;
           }
-          if (quota && !quota.allows(budgetKey, 1)) {
-            // The budget ran out part-way through this batch. The files that
-            // already landed stay; the rest are told why rather than being
-            // dropped without a word.
+          // Claimed here, at the moment this file is about to be stored, and
+          // synchronously — checking and recording later is a race, and not a
+          // theoretical one: eight requests sent at once all passed a limit of
+          // three, because each looked before any had written anything.
+          const slot = quota ? quota.reserve(budgetKey, 0) : null;
+          if (quota && !slot) {
+            // The budget ran out, possibly part-way through this batch. The
+            // files that already landed stay; the rest are told why rather
+            // than being dropped without a word.
             failures.push({
               name: info.filename,
               code: 'QUOTA',
@@ -373,7 +385,9 @@ export function createUploadHandler(options = {}) {
             // Counted after the fact rather than before: the size is only
             // known once the file has been read, and refusing on a guess
             // would mean refusing on the Content-Length the client claimed.
-            if (quota) quota.take(budgetKey, stored.size);
+            // Corrected to what the file actually weighed; the claim above
+            // could not know it.
+            if (quota) quota.settle(slot, stored.size);
             total += stored.size;
             uploaded.push({
               name: stored.name,
@@ -385,6 +399,9 @@ export function createUploadHandler(options = {}) {
               ...(identity === null ? {} : { owner: identity }),
             });
           } catch (err) {
+            // A file that did not land gives its place back rather than
+            // spending somebody's budget on a refusal.
+            if (quota) quota.release(slot);
             // One bad file does not fail the batch: the client is told which
             // ones did not make it, and why, and keeps the rest.
             const known = err instanceof UploadError;
