@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { UploadError } from './errors.js';
 import { createScanner, screen } from './scan.js';
+import { DIMENSION_BYTES, readDimensions, readDimensionsWithSeek } from './dimensions.js';
 import { KNOWN_IMAGE_TYPES, SNIFF_BYTES, looksLikeSvg, sniffImage } from './sniff.js';
 import { assertValidName, resolveInside, withSuffix } from './safe-name.js';
 
@@ -20,6 +21,12 @@ export const DEFAULT_LIMITS = {
   maxRequestSize: 100 * 1024 * 1024,
   /** Refuse an upload when the disk has less than this free. */
   minFreeSpace: 64 * 1024 * 1024,
+  /**
+   * Pixels a picture may declare. The client refuses these too, but the client
+   * is not what an attacker uses: a 30 KB PNG can say 40000×40000, and curl
+   * will post one past a check that is not running.
+   */
+  maxPixels: 50 * 1024 * 1024,
 };
 
 /**
@@ -134,6 +141,17 @@ export class UploadService {
       throw new UploadError(400, 'EMPTY', 'The file is empty');
     }
 
+    // A TIFF keeps its directory after the pixels, and a JPEG with a big
+    // embedded thumbnail can push its frame header past any header we held.
+    // Both are answerable exactly now that the whole file is on disk.
+    if (this.limits.maxPixels && !outcome.dimensions) {
+      const measured = await this.#measure(temp, outcome.type);
+      if (measured && measured.width * measured.height > this.limits.maxPixels) {
+        await fs.rm(temp, { force: true });
+        throw this.#pixelRefusal(measured);
+      }
+    }
+
     // Screened while it is still a temp file with a random name: a file that
     // is refused here never existed under a name anything would serve.
     if (this.scanner) {
@@ -177,6 +195,7 @@ export class UploadService {
       let head = Buffer.alloc(0);
       let size = 0;
       let type = null;
+      let dimensions = null;
       // Computed as the file goes by, so screening it afterwards costs no
       // second pass over the bytes.
       const digest = crypto.createHash('sha256');
@@ -203,15 +222,33 @@ export class UploadService {
           );
           return;
         }
-        if (!type) {
-          head = head.length ? Buffer.concat([head, chunk]) : Buffer.from(chunk);
-          if (head.length >= SNIFF_BYTES) {
-            const verdict = this.#identify(head);
-            if (verdict.error) {
-              disqualify(verdict.error);
-              return;
-            }
-            type = verdict.type;
+        // The header is kept past the point the type is known, because the
+        // size a picture declares can sit much further in than its signature.
+        // Capped exactly: a single chunk can be the whole file, and holding an
+        // arbitrary amount of it per upload in flight is not a header, it is a
+        // memory leak with a limit set by whoever is uploading.
+        if (head.length < DIMENSION_BYTES && !dimensions) {
+          const room = DIMENSION_BYTES - head.length;
+          const piece = chunk.length > room ? chunk.subarray(0, room) : chunk;
+          head = head.length ? Buffer.concat([head, piece]) : Buffer.from(piece);
+        }
+        if (!type && head.length >= SNIFF_BYTES) {
+          const verdict = this.#identify(head);
+          if (verdict.error) {
+            disqualify(verdict.error);
+            return;
+          }
+          type = verdict.type;
+        }
+        if (type && !dimensions) {
+          dimensions = readDimensions(head, type);
+          const tooMany = dimensions && this.limits.maxPixels
+            && dimensions.width * dimensions.height > this.limits.maxPixels;
+          if (tooMany) {
+            // Refused while it is still streaming: there is no reason to take
+            // the rest of a file that is going to be thrown away.
+            disqualify(this.#pixelRefusal(dimensions));
+            return;
           }
         }
         digest.update(chunk);
@@ -244,12 +281,50 @@ export class UploadService {
         broken = broken ?? new UploadError(500, 'INTERNAL', 'Could not store the file');
       });
       out.on('close', () =>
-        (broken ? reject(broken) : resolve({ size, type, failure, sha256: digest.digest('hex') })));
+        (broken ? reject(broken) : resolve({ size, type, failure, dimensions, sha256: digest.digest('hex') })));
 
       // Every listener is attached; the caller may have paused the stream
       // until exactly this point.
       stream.resume();
     });
+  }
+
+  /**
+   * Read the declared size from a file already written, where seeking is free.
+   *
+   * A failure here is not a refusal: a format this cannot measure is let
+   * through rather than turning a missing parser into a broken endpoint.
+   */
+  async #measure(absolute, type) {
+    let handle;
+    try {
+      handle = await fs.open(absolute, 'r');
+      return await readDimensionsWithSeek(async (offset, length) => {
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, offset);
+        return buffer.subarray(0, bytesRead);
+      }, type);
+    } catch (err) {
+      this.warn('Could not read the image dimensions', err);
+      return null;
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+  }
+
+  /**
+   * The refusal for a picture that declares more pixels than are allowed.
+   *
+   * The numbers travel with it, because "too large" without them tells the
+   * person nothing they can act on.
+   */
+  #pixelRefusal(dimensions) {
+    return new UploadError(
+      413,
+      'TOO_MANY_PIXELS',
+      `The image declares ${dimensions.width}×${dimensions.height}, more than the server allows`,
+      { limit: this.limits.maxPixels, width: dimensions.width, height: dimensions.height }
+    );
   }
 
   /** Decide what the leading bytes are, and whether they are welcome. */

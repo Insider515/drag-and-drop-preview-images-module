@@ -332,6 +332,7 @@ createUploadHandler({
     maxFileSize: 10 * 1024 * 1024,
     maxFiles: 20,
     maxRequestSize: 100 * 1024 * 1024,
+    maxPixels: 50 * 1024 * 1024,      // pixels a picture may declare; 0 turns it off
     minFreeSpace: 64 * 1024 * 1024,
   },
   maxConcurrent: 8,         // uploads in flight; beyond that, 503
@@ -800,6 +801,18 @@ server-to-server call — is allowed.
 **Limits** are counted from bytes actually received, not from `Content-Length`, which is
 the sender's claim and absent entirely from a chunked request.
 
+**Declared size.** A 30 KB PNG can say it is 40000×40000: thirty kilobytes on the wire, six
+gigabytes once anything decodes it. The browser refuses those, but the browser is not what
+an attacker uses — `curl` posts one straight past a check that is not running. So the
+server reads the dimensions out of the header itself, without decoding anything, and
+refuses the file while it is still streaming. `limits.maxPixels` sets the ceiling, 50
+megapixels by default; `0` turns it off.
+
+A TIFF keeps its directory after the pixels, and a JPEG with a large embedded thumbnail can
+push its frame header past any header held in memory. Both are measured from the finished
+temp file, before it is given a real name. A format whose size cannot be read is let
+through rather than turning a missing parser into a broken endpoint.
+
 **In the DOM.** Nothing is built by concatenating strings into `innerHTML`; the helper
 this widget uses has no such escape hatch. A file called `<img src=x onerror=alert(1)>.png`
 is rendered as that text and nothing else.
@@ -814,8 +827,8 @@ is rendered as that text and nothing else.
 - **No image processing unless you turn it on.** Without a `compress` block nothing is
   re-encoded, resized or stripped, and EXIF — including GPS coordinates — is stored as it
   arrived.
-- No dimension limit on the server: `maxPixels` guards the preview in the browser, so a
-  request made with curl can store a small file that declares enormous dimensions.
+- No inspection of the pixels themselves: the dimensions are read from the header, which is
+  what a decoder would believe, but nothing here decodes an image to check it really is one.
 - `server/standalone.js` is a development server with no authentication. It is not part of
   the npm package.
 
@@ -826,7 +839,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 396 tests
+npm test             # 423 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
@@ -899,9 +912,9 @@ test/               tests
 - Compression is the browser's canvas, so there is no *lossless recompression*: squeezing
   a JPEG without touching its pixels needs a codec, and a codec is a dependency. Dropping
   metadata is exact; everything else re-encodes.
-- `maxPixels` guards the preview, not the server: a host that wants a dimension limit
-  server-side has to decode there too, which needs an image library this package does not
-  depend on.
+- Dimensions are read from the header, not measured: a file that declares a modest size and
+  then contains something else is stored. What the check stops is the opposite, and more
+  useful, case — a small file declaring an enormous one.
 - The queue is kept in a hidden input via `DataTransfer`, which every current browser
   supports but which has no fallback — a browser without it cannot carry the files through
   a plain form submit.

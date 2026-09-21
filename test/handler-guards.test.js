@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import zlib from 'node:zlib';
 
 import { createUploadHandler } from '../server/handler.js';
 
@@ -169,5 +170,59 @@ describe('fields that are not files', () => {
 
     assert.deepEqual(answer.uploaded.map((u) => u.original), ['a.png']);
     assert.deepEqual(await fs.readdir(root), ['a.png']);
+  });
+});
+
+describe('a decompression bomb over HTTP', () => {
+  /** A tiny PNG claiming to be enormous. */
+  function bomb(width, height) {
+    const chunk = (type, data) => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(data.length, 0);
+      head.write(type, 4, 'latin1');
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(zlib.crc32(Buffer.concat([Buffer.from(type, 'latin1'), data])), 0);
+      return Buffer.concat([head, data, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8;
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', zlib.deflateSync(Buffer.alloc(64))),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+  }
+
+  test('is refused by the server, not only by the browser', async () => {
+    // curl does not run the client's checks, which is the whole point of
+    // having this one.
+    const { base, root } = await endpoint();
+    const form = new FormData();
+    form.append('images[]', new Blob([bomb(40000, 40000)]), 'bomb.png');
+    const response = await fetch(base, { method: 'POST', body: form });
+    const answer = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(answer.uploaded.length, 0);
+    assert.equal(answer.failures[0].code, 'TOO_MANY_PIXELS');
+    assert.deepEqual(answer.failures[0].params, {
+      limit: 50 * 1024 * 1024, width: 40000, height: 40000,
+    });
+    assert.deepEqual(await fs.readdir(root), [], 'the bomb reached the disk');
+  });
+
+  test('the good files in the same request still land', async () => {
+    const { base, root } = await endpoint();
+    const form = new FormData();
+    form.append('images[]', new Blob([bomb(40000, 40000)]), 'bomb.png');
+    form.append('images[]', new Blob([bomb(200, 200)]), 'fine.png');
+    const answer = await (await fetch(base, { method: 'POST', body: form })).json();
+
+    assert.deepEqual(answer.uploaded.map((u) => u.original), ['fine.png']);
+    assert.deepEqual(answer.failures.map((f) => f.code), ['TOO_MANY_PIXELS']);
+    assert.deepEqual(await fs.readdir(root), ['fine.png']);
   });
 });

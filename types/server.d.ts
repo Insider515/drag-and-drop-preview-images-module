@@ -25,6 +25,11 @@ export interface ServerLimits {
   maxRequestSize: number;
   /** Refuse an upload when the disk has less than this free. */
   minFreeSpace: number;
+  /**
+   * Pixels a picture may declare. The client refuses these too, but the
+   * client is not what an attacker uses. 0 turns the check off.
+   */
+  maxPixels: number;
 }
 
 export declare const DEFAULT_LIMITS: ServerLimits;
@@ -215,6 +220,17 @@ export declare function looksLikeSvg(head: Buffer | Uint8Array): boolean;
 
 /** Turning a name the browser sent into a name on disk. */
 export declare function baseName(raw: string): string;
+export declare const DIMENSION_BYTES: number;
+/** What a file says its size is, read from its header. Null when unreadable. */
+export declare function readDimensions(
+  head: Uint8Array,
+  type: string
+): { width: number; height: number } | null;
+export declare function readDimensionsWithSeek(
+  read: (offset: number, length: number) => Promise<Uint8Array>,
+  type: string
+): Promise<{ width: number; height: number } | null>;
+
 export declare function assertValidName(raw: string): string;
 export declare function resolveInside(root: string, name: string): string;
 export declare function withSuffix(name: string, n: number): string;

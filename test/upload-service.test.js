@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import zlib from 'node:zlib';
 
 import { TEMP_PREFIX, UploadService } from '../server/upload-service.js';
 import { UploadError } from '../server/errors.js';
@@ -17,6 +18,11 @@ function png(size = 1024) {
 }
 
 const streamOf = (buffer) => Readable.from([buffer]);
+
+/** The same bytes, delivered the way a socket delivers them. */
+const inChunks = (buffer, size = 16 * 1024) => Readable.from((function* () {
+  for (let at = 0; at < buffer.length; at += size) yield buffer.subarray(at, at + size);
+})());
 
 /** What is on disk, ignoring anything still in flight. */
 async function listed() {
@@ -278,5 +284,118 @@ describe('a directory already full of that name', () => {
     assert.ok(err instanceof UploadError);
     assert.equal(err.status, 409);
     assert.deepEqual(await temps(), [], 'the temp file survived the refusal');
+  });
+});
+
+describe('a picture that declares more pixels than it has', () => {
+  /** A tiny PNG claiming to be enormous. */
+  function bomb(width, height) {
+    const chunk = (type, data) => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(data.length, 0);
+      head.write(type, 4, 'latin1');
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(zlib.crc32(Buffer.concat([Buffer.from(type, 'latin1'), data])), 0);
+      return Buffer.concat([head, data, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8;
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', zlib.deflateSync(Buffer.alloc(64))),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+  }
+
+  test('is refused, however small the file is', async () => {
+    // Thirty kilobytes on the wire, six gigabytes once something decodes it.
+    // The browser refuses these; the browser is not what an attacker uses.
+    const service = new UploadService({ root });
+    const tiny = bomb(40000, 40000);
+    assert.ok(tiny.length < 1024, `the fixture is not small: ${tiny.length} bytes`);
+
+    const err = await service.store('bomb.png', streamOf(tiny)).then(() => null, (e) => e);
+    assert.ok(err instanceof UploadError);
+    assert.equal(err.code, 'TOO_MANY_PIXELS');
+    assert.equal(err.status, 413);
+    assert.deepEqual(err.params, { limit: 50 * 1024 * 1024, width: 40000, height: 40000 });
+    assert.deepEqual(await listed(), []);
+    assert.deepEqual(await temps(), []);
+  });
+
+  test('an ordinary photograph is not', async () => {
+    const service = new UploadService({ root });
+    const stored = await service.store('holiday.png', streamOf(bomb(4000, 3000)));
+    assert.equal(stored.name, 'holiday.png');
+  });
+
+  test('the ceiling is the host’s to set', async () => {
+    const service = new UploadService({ root, limits: { maxPixels: 1000 } });
+    const err = await service.store('a.png', streamOf(bomb(100, 100))).then(() => null, (e) => e);
+    assert.equal(err.code, 'TOO_MANY_PIXELS');
+
+    const smaller = new UploadService({ root, limits: { maxPixels: 20_000 } });
+    assert.ok(await smaller.store('b.png', streamOf(bomb(100, 100))));
+  });
+
+  test('and the check can be turned off entirely', async () => {
+    const service = new UploadService({ root, limits: { maxPixels: 0 } });
+    const stored = await service.store('huge.png', streamOf(bomb(40000, 40000)));
+    assert.equal(stored.name, 'huge.png');
+  });
+
+  test('a format whose size cannot be read is let through', async () => {
+    // A missing parser must not turn into a broken endpoint.
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="9"></svg>');
+    const service = new UploadService({ root, allowSvg: true });
+    const stored = await service.store('x.svg', streamOf(svg));
+    assert.equal(stored.name, 'x.svg');
+  });
+});
+
+describe('a TIFF, which keeps its size after the pixels', () => {
+  /** A TIFF whose directory sits at the end, the way a real one does. */
+  function tiffBomb(width, height, bodyBytes) {
+    const at = 8 + bodyBytes;
+    const entries = [[0x0100, width], [0x0101, height]];
+    const b = Buffer.alloc(at + 2 + entries.length * 12 + 4);
+    b.write('II', 0, 'latin1');
+    b.writeUInt16LE(42, 2);
+    b.writeUInt32LE(at, 4);
+    b.fill(0x41, 8, at);
+    b.writeUInt16LE(entries.length, at);
+    entries.forEach(([tag, value], i) => {
+      const e = at + 2 + i * 12;
+      b.writeUInt16LE(tag, e);
+      b.writeUInt16LE(4, e + 2);
+      b.writeUInt32LE(1, e + 4);
+      b.writeUInt32LE(value, e + 8);
+    });
+    return b;
+  }
+
+  test('is measured even when the directory is far past any header held', async () => {
+    // 200 KB of pixels before the numbers: nothing a streaming reader still
+    // has in hand by then. It is answerable once the file is on disk.
+    const service = new UploadService({ root });
+    const bytes = tiffBomb(40000, 40000, 200 * 1024);
+
+    // Fed in pieces, the way a socket delivers it. Handing the whole file over
+    // in one chunk would leave the entire thing sitting in the header buffer,
+    // and the case would pass without the seeking pass it exists to cover.
+    const err = await service.store('bomb.tiff', inChunks(bytes)).then(() => null, (e) => e);
+    assert.ok(err instanceof UploadError, 'a TIFF bomb was stored');
+    assert.equal(err.code, 'TOO_MANY_PIXELS');
+    assert.deepEqual(await listed(), []);
+    assert.deepEqual(await temps(), [], 'the temp copy survived the refusal');
+  });
+
+  test('and an ordinary one still goes through', async () => {
+    const service = new UploadService({ root });
+    const stored = await service.store('scan.tiff', inChunks(tiffBomb(1200, 900, 64 * 1024)));
+    assert.equal(stored.name, 'scan.tiff');
   });
 });

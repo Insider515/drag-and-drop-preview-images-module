@@ -60,7 +60,7 @@ export default {
     'error.TYPE_NOT_ALLOWED': '{type} is not accepted here',
     'error.SVG_REFUSED': 'SVG is not accepted here',
     'error.DUPLICATE': 'Already chosen',
-    'error.TOO_MANY_PIXELS': 'The image is too large to display',
+    'error.TOO_MANY_PIXELS': 'The image has too many pixels',
     'error.DECODE_FAILED': 'The image could not be read',
     'error.NOTHING_TO_UPLOAD': 'Nothing left to upload — every file was refused',
 

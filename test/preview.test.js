@@ -119,7 +119,7 @@ describe('previews: tiles fill in one at a time', () => {
 
     const [tile] = tiles(drop);
     assert.equal(tile.dataset.status, 'error');
-    assert.match(tile.querySelector('.ddp-size').textContent, /too large to display/i);
+    assert.match(tile.querySelector('.ddp-size').textContent, /too many pixels/i);
     assert.equal(dom.urls.size, 0, 'the object URL was not revoked');
     drop.destroy();
   });

@@ -42,7 +42,7 @@ export default {
     'error.TYPE_NOT_ALLOWED': '{type} тут не приймається',
     'error.SVG_REFUSED': 'SVG тут не приймається',
     'error.DUPLICATE': 'Уже обрано',
-    'error.TOO_MANY_PIXELS': 'Зображення завелике для показу',
+    'error.TOO_MANY_PIXELS': 'У зображення забагато пікселів',
     'error.DECODE_FAILED': 'Не вдалося прочитати зображення',
     'error.NOTHING_TO_UPLOAD': 'Нема чого завантажувати — усі файли відхилено',
     'srv.NETWORK': 'Не вдалося зв’язатися із сервером',

@@ -42,7 +42,7 @@ export default {
     'error.TYPE_NOT_ALLOWED': '{type} wird hier nicht angenommen',
     'error.SVG_REFUSED': 'SVG wird hier nicht angenommen',
     'error.DUPLICATE': 'Bereits ausgewählt',
-    'error.TOO_MANY_PIXELS': 'Das Bild ist zu groß für die Anzeige',
+    'error.TOO_MANY_PIXELS': 'Das Bild hat zu viele Pixel',
     'error.DECODE_FAILED': 'Das Bild konnte nicht gelesen werden',
     'error.NOTHING_TO_UPLOAD': 'Nichts mehr zum Hochladen — jede Datei wurde abgelehnt',
     'srv.NETWORK': 'Der Server ist nicht erreichbar',

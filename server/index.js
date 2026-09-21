@@ -15,6 +15,7 @@ export { createUploadHandler, default } from './handler.js';
 export { UploadService, DEFAULT_LIMITS, TEMP_PREFIX } from './upload-service.js';
 export { UploadError } from './errors.js';
 export { createScanner, screen } from './scan.js';
+export { DIMENSION_BYTES, readDimensions, readDimensionsWithSeek } from './dimensions.js';
 export {
   IMAGE_SIGNATURES,
   KNOWN_IMAGE_TYPES,
