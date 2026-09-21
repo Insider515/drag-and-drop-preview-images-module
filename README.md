@@ -469,6 +469,7 @@ createUploadHandler({
     maxFiles: 20,
     maxRequestSize: 100 * 1024 * 1024,
     maxPixels: 50 * 1024 * 1024,      // pixels a picture may declare; 0 turns it off
+    maxBytesPerSecond: 0,             // bytes a second per upload; 0 is no limit
     minFreeSpace: 64 * 1024 * 1024,
   },
   maxConcurrent: 8,         // uploads in flight; beyond that, 503
@@ -969,6 +970,59 @@ is handled by `onError` — a scanner answering nonsense is never read as clean.
 
 ---
 
+## Holding an upload to a speed
+
+Off by default. Set a rate and the server reads that slowly:
+
+```js
+createUploadHandler({
+  root: './uploads',
+  limits: { maxBytesPerSecond: 512 * 1024 },   // 0 is no limit
+});
+```
+
+Measured on a live endpoint: 256 KB at 256 KB/s took 1004 ms, and at 128 KB/s took 2002 ms,
+with the files byte-identical on disk.
+
+### It has to be the server, and this is not a choice
+
+A browser gives JavaScript **no control at all** over how fast it sends a request body.
+There is no rate setting on `XMLHttpRequest`, none on its `upload` object, and nothing in
+`fetch`. Checked rather than assumed:
+
+```
+XMLHttpRequest.prototype     — no rate, throttle or speed member
+XMLHttpRequestUpload         — the same
+```
+
+The one mechanism that would allow it is a `ReadableStream` as the request body, fed slowly.
+That needs HTTP/2, and exists in Chrome and Edge but not Safari or Firefox; on a plain
+HTTP/1.1 endpoint it fails outright, which is what happens on the demo server.
+
+So the limit lives where it can actually be enforced. Reading slowly fills the TCP window,
+and the sender has to wait — which reaches the browser without asking it for anything.
+
+### What it protects, and what it does not
+
+**It protects your server**: its bandwidth, its disk, and the other people using it.
+
+**It does not make the visitor's page more responsive.** Their browser still pushes at full
+speed into the operating system's buffers; it simply cannot get rid of them any faster.
+If the goal is "an upload should not saturate the visitor's connection", this is not that,
+and nothing in a browser is.
+
+**It is per upload, not per server.** Two at once each get the rate: measured, two 256 KB
+uploads at 256 KB/s each finished together in 1037 ms — about 494 KB/s in total. With
+`maxConcurrent` in flight the ceiling is that many times the figure, so pick it with that
+multiplication in mind.
+
+**It is approximate.** The pause is measured against the whole transfer rather than the last
+chunk, so an overshoot is made up afterwards instead of compounding. Over a real socket that
+lands within a percent; fed enormous chunks in memory it can run some ten percent over,
+because a pause does not un-deliver a chunk already in flight.
+
+---
+
 ## Security
 
 The theme throughout: **the file's own bytes decide, and the server decides again.**
@@ -1042,7 +1096,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 500 tests
+npm test             # 508 tests
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

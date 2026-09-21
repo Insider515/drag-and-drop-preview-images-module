@@ -227,3 +227,9 @@ new DropPreview('#images', { reorder: false });
 sortable.on('reorder', ({ id, from, to, files }) =>
   console.log(`${id} moved from ${from} to ${to}, now ${files.length} files`));
 const moved: boolean = sortable.move('some-id', 0);
+
+// --- holding an upload to a speed -----------------------------------------
+createUploadHandler({
+  root: './uploads',
+  limits: { maxBytesPerSecond: 512 * 1024 },
+});

@@ -27,6 +27,16 @@ export const DEFAULT_LIMITS = {
    * will post one past a check that is not running.
    */
   maxPixels: 50 * 1024 * 1024,
+  /**
+   * Bytes a second one upload may take. 0 is no limit, which is the default.
+   *
+   * There is no way to do this from the page: a browser gives JavaScript no
+   * control over how fast it sends a request body, and the one mechanism that
+   * would — a stream as the body — needs HTTP/2 and exists in two browsers of
+   * three. Reading slowly here does the same job by the only route that works
+   * everywhere: the window fills, and the sender has to wait.
+   */
+  maxBytesPerSecond: 0,
 };
 
 /**
@@ -58,6 +68,10 @@ export class UploadService {
     this.allowSvg = options.allowSvg ?? false;
     this.onConflict = options.onConflict ?? 'rename';
     this.limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
+    const rate = this.limits.maxBytesPerSecond;
+    if (!Number.isFinite(rate) || rate < 0) {
+      throw new Error('limits.maxBytesPerSecond must be a number of bytes, 0 for no limit');
+    }
     this.renameHook = options.rename ?? null;
     this.scanner = createScanner(options.scan);
     this.warn = options.onWarning ?? (() => {});
@@ -208,6 +222,42 @@ export class UploadService {
         out.end();
       };
 
+      // Two different reasons to stop reading, and each has to wait for the
+      // other: a disk that catches up must not undo a pause the rate asked
+      // for, and a rate timer must not undo one the disk asked for.
+      const rate = this.limits.maxBytesPerSecond || 0;
+      const startedAt = Date.now();
+      let pausedForDisk = false;
+      let rateTimer = null;
+
+      const readAgain = () => {
+        if (pausedForDisk || rateTimer) return;
+        stream.resume();
+      };
+
+      /**
+       * Hold the stream back to the rate asked for.
+       *
+       * Measured against the whole transfer rather than the last chunk, so a
+       * pause that overshoots is made up afterwards instead of compounding.
+       */
+      const holdBack = () => {
+        if (!rate || rateTimer) return;
+        const owed = (size / rate) * 1000 - (Date.now() - startedAt);
+        // Below a few milliseconds a timer costs more than it saves.
+        if (owed < 5) return;
+        stream.pause();
+        rateTimer = setTimeout(() => {
+          rateTimer = null;
+          readAgain();
+        }, owed);
+      };
+
+      const stopWaiting = () => {
+        clearTimeout(rateTimer);
+        rateTimer = null;
+      };
+
       stream.on('data', (chunk) => {
         if (failure) return; // still draining, no longer storing
         size += chunk.length;
@@ -252,10 +302,17 @@ export class UploadService {
           }
         }
         digest.update(chunk);
-        if (!out.write(chunk)) stream.pause();
+        if (!out.write(chunk)) {
+          pausedForDisk = true;
+          stream.pause();
+        }
+        holdBack();
       });
 
-      out.on('drain', () => stream.resume());
+      out.on('drain', () => {
+        pausedForDisk = false;
+        readAgain();
+      });
       // busboy truncates at its own fileSize limit and says so here.
       stream.on('limit', () =>
         disqualify(new UploadError(413, 'TOO_LARGE', 'Larger than the server allows', {
@@ -265,10 +322,12 @@ export class UploadService {
         // Settled from 'close' below rather than here: the temp file has to be
         // finished and closed before the caller can delete it, or the delete
         // races the open and leaves the file behind.
+        stopWaiting();
         broken = new UploadError(400, 'ABORTED', 'The upload was interrupted');
         disqualify(broken);
       });
       stream.on('end', () => {
+        stopWaiting();
         // A file shorter than the sniff window never reached the check above.
         if (!failure && !type) {
           const verdict = this.#identify(head);
@@ -280,8 +339,11 @@ export class UploadService {
       out.on('error', () => {
         broken = broken ?? new UploadError(500, 'INTERNAL', 'Could not store the file');
       });
-      out.on('close', () =>
-        (broken ? reject(broken) : resolve({ size, type, failure, dimensions, sha256: digest.digest('hex') })));
+      out.on('close', () => {
+        stopWaiting();
+        if (broken) reject(broken);
+        else resolve({ size, type, failure, dimensions, sha256: digest.digest('hex') });
+      });
 
       // Every listener is attached; the caller may have paused the stream
       // until exactly this point.

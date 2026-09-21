@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import zlib from 'node:zlib';
 
-import { TEMP_PREFIX, UploadService } from '../server/upload-service.js';
+import { DEFAULT_LIMITS, TEMP_PREFIX, UploadService } from '../server/upload-service.js';
 import { UploadError } from '../server/errors.js';
 
 let root;
@@ -397,5 +397,120 @@ describe('a TIFF, which keeps its size after the pixels', () => {
     const service = new UploadService({ root });
     const stored = await service.store('scan.tiff', inChunks(tiffBomb(1200, 900, 64 * 1024)));
     assert.equal(stored.name, 'scan.tiff');
+  });
+});
+
+describe('holding an upload to a speed', () => {
+  /** Roughly how long a transfer of this size should take at this rate. */
+  const expected = (bytes, rate) => (bytes / rate) * 1000;
+
+  test('a limit slows the read to about the rate asked for', async () => {
+    // A browser gives JavaScript no say in how fast it sends a body, so this
+    // is the only place the question can be answered at all.
+    const bytes = 48 * 1024;
+    const rate = 96 * 1024;   // half a second's worth
+    const service = new UploadService({ root, limits: { maxBytesPerSecond: rate } });
+
+    const started = Date.now();
+    const stored = await service.store('slow.png', inChunks(png(bytes), 4096));
+    const took = Date.now() - started;
+
+    const target = expected(bytes, rate);
+    assert.ok(took > target * 0.6, `finished in ${took} ms, far under the ${Math.round(target)} it should take`);
+    assert.ok(took < target * 4, `took ${took} ms, far over the ${Math.round(target)} it should take`);
+    assert.equal(stored.size, bytes, 'the file was truncated by the throttle');
+  });
+
+  test('the bytes come through untouched', async () => {
+    const bytes = png(16 * 1024);
+    const service = new UploadService({ root, limits: { maxBytesPerSecond: 64 * 1024 } });
+    const stored = await service.store('whole.png', inChunks(bytes, 2048));
+
+    const written = await fs.readFile(stored.path);
+    assert.equal(written.length, bytes.length);
+    assert.ok(written.equals(bytes), 'the file on disk is not the file that was sent');
+  });
+
+  test('a lower limit really does take longer', async () => {
+    const bytes = 32 * 1024;
+    const time = async (rate) => {
+      const service = new UploadService({ root, limits: { maxBytesPerSecond: rate } });
+      const started = Date.now();
+      await service.store(`r-${rate}.png`, inChunks(png(bytes), 4096));
+      return Date.now() - started;
+    };
+    const fast = await time(128 * 1024);
+    const slow = await time(32 * 1024);
+    assert.ok(slow > fast * 1.5, `128 KB/s took ${fast} ms, 32 KB/s took ${slow} ms`);
+  });
+
+  test('no limit is the default, and 0 says so explicitly', async () => {
+    assert.equal(DEFAULT_LIMITS.maxBytesPerSecond, 0);
+
+    const service = new UploadService({ root, limits: { maxBytesPerSecond: 0 } });
+    const started = Date.now();
+    await service.store('quick.png', inChunks(png(64 * 1024), 4096));
+    assert.ok(Date.now() - started < 500, 'an unlimited upload was throttled anyway');
+  });
+
+  test('a nonsense rate is refused when the service is built', () => {
+    for (const bad of [-1, 'fast', NaN, Infinity, null]) {
+      assert.throws(
+        () => new UploadService({ root, limits: { maxBytesPerSecond: bad } }),
+        /maxBytesPerSecond/,
+        String(bad)
+      );
+    }
+  });
+
+  test('a file over the size limit is still refused, not slowly accepted', async () => {
+    const service = new UploadService({
+      root,
+      limits: { maxFileSize: 8 * 1024, maxBytesPerSecond: 256 * 1024 },
+    });
+    const err = await service.store('big.png', inChunks(png(64 * 1024), 4096))
+      .then(() => null, (e) => e);
+
+    assert.equal(err.code, 'TOO_LARGE');
+    assert.deepEqual(await temps(), [], 'the throttle left a temp file behind');
+  });
+
+  test('an interrupted upload leaves no timer holding the process open', async () => {
+    // A pending resume would keep the event loop alive after everything else
+    // had finished, which is how a server stops shutting down cleanly.
+    const service = new UploadService({ root, limits: { maxBytesPerSecond: 8 * 1024 } });
+    const stream = Readable.from((function* () {
+      yield png(4096);
+      yield png(4096);
+    })());
+
+    const storing = service.store('cut.png', stream);
+    setTimeout(() => stream.destroy(new Error('gone')), 60);
+    await storing.catch(() => {});
+
+    assert.deepEqual(await temps(), []);
+    assert.deepEqual(await listed(), []);
+  });
+});
+
+describe('the throttle and the disk do not undo each other', () => {
+  test('a disk catching up does not cancel a pause the rate asked for', async () => {
+    // With chunks large enough for the write stream to push back, both reasons
+    // to stop reading are live at once. A drain handler that simply resumes
+    // defeats the limit entirely — measured at 6 ms for a transfer that should
+    // take a second.
+    const bytes = 512 * 1024;
+    const rate = 512 * 1024;
+    const service = new UploadService({
+      root,
+      limits: { maxFileSize: 8 * 1024 * 1024, maxBytesPerSecond: rate },
+    });
+
+    const started = Date.now();
+    const stored = await service.store('pushy.png', inChunks(png(bytes), 128 * 1024));
+    const took = Date.now() - started;
+
+    assert.ok(took > 400, `1 second's worth went through in ${took} ms`);
+    assert.equal(stored.size, bytes);
   });
 });

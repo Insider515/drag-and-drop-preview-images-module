@@ -30,6 +30,13 @@ export interface ServerLimits {
    * client is not what an attacker uses. 0 turns the check off.
    */
   maxPixels: number;
+  /**
+   * Bytes a second one upload may take. 0, the default, is no limit.
+   *
+   * Per upload rather than per server: with `maxConcurrent` in flight the
+   * total can reach that many times this figure.
+   */
+  maxBytesPerSecond: number;
 }
 
 export declare const DEFAULT_LIMITS: ServerLimits;
