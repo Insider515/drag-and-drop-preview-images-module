@@ -42,6 +42,14 @@ Everything below has landed on `master` and is not yet published to npm.
 - **A dimension limit on the server.** A 30 KB PNG declaring 40000×40000 is refused while it
   is still streaming; the dimensions are read from the header without decoding anything.
 
+### Changed
+
+- **Node 20 is the floor**, where the package claimed 18. The library itself needs nothing
+  newer, but the tests do — `File` and `zlib.crc32` both arrived after 18 — so the Node 18
+  job in CI had been red since the day the workflow landed, and the suite had in truth never
+  run there. Declaring 20 says what is actually checked. The matrix is now 20, 22 and 24,
+  and all three were run green before this went in.
+
 ### Fixed
 
 - An upload the client abandoned mid-part left its temporary file behind for ever, because

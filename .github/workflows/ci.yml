@@ -12,10 +12,10 @@ jobs:
       # One failing version should still leave the others' results readable.
       fail-fast: false
       matrix:
-        # The oldest the package claims to support, the current LTS, and the
-        # current release. A test that only ever runs on one of them is a test
+        # The oldest the package claims to support, the one in between, and
+        # the current LTS. A test that only ever runs on one of them is a test
         # that finds out about the others from an issue report.
-        node: ['18', '20', '22']
+        node: ['20', '22', '24']
 
     steps:
       - uses: actions/checkout@v4

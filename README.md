@@ -1324,7 +1324,7 @@ test/               tests
 - Uploads are one request for the whole queue. There is no chunking, so a very large
   queue on a poor connection is all-or-nothing.
 - The widget uses container queries and `:has()` — a 2023 browser or newer.
-- Node 18+.
+- Node 20+.
 
 ## Licence
 
