@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 import { installDom, uninstallDom, image } from './helpers/fake-dom.js';
@@ -84,5 +85,46 @@ describe('the server entry', () => {
   test('the only runtime dependency is the multipart parser', () => {
     // A widget people drop into a page should not drag a tree in behind it.
     assert.deepEqual(Object.keys(pkg.dependencies ?? {}), ['busboy']);
+  });
+});
+
+describe('the size the README promises', { skip: hasBuild ? false : 'dist/ is not built yet' }, () => {
+  const gzipped = (file) =>
+    zlib.gzipSync(fs.readFileSync(path.join(here, '..', file)), { level: 9 }).length;
+  const kb = (bytes) => Math.round(bytes / 1024);
+
+  /** The figure both READMEs put in their opening paragraph. */
+  const claimed = (readme, pattern) => {
+    const text = fs.readFileSync(path.join(here, '..', readme), 'utf8');
+    const match = pattern.exec(text);
+    assert.ok(match, `${readme} no longer states a size at all`);
+    return { js: Number(match[1]), css: Number(match[2]) };
+  };
+
+  test('is the size it actually is', () => {
+    // It said 13 KB for months after it stopped being 13 KB: true when the
+    // package was written, then compression, sessions, screening, retries,
+    // reordering and a quota were added and nobody went back to the sentence.
+    // The first thing anyone reads should not be the thing most likely to rot.
+    const real = { js: kb(gzipped(pkg.exports['.'].import)), css: kb(gzipped(pkg.exports['./style.css'])) };
+    const english = claimed('README.md', /(\d+) KB of JS and (\d+) KB of CSS gzipped/);
+
+    assert.deepEqual(english, real,
+      `README.md says ${english.js} KB + ${english.css} KB, the build is ${real.js} KB + ${real.css} KB`);
+  });
+
+  test('and both languages say the same number', () => {
+    const english = claimed('README.md', /(\d+) KB of JS and (\d+) KB of CSS gzipped/);
+    const ukrainian = claimed('README.uk.md', /(\d+) КБ JS і (\d+) КБ CSS у gzip/);
+    assert.deepEqual(ukrainian, english);
+  });
+
+  test('the ES bundle is minified, not merely renamed', () => {
+    // Vite shortens the identifiers in library mode but leaves the ES output
+    // laid out over its lines. For anyone loading it from a script tag rather
+    // than through a bundler, that was six kilobytes of gzip for whitespace.
+    const code = fs.readFileSync(path.join(here, '..', pkg.exports['.'].import), 'utf8');
+    const lines = code.split('\n').length;
+    assert.ok(lines < 50, `the bundle is spread over ${lines} lines`);
   });
 });

@@ -66,6 +66,11 @@ Everything below has landed on `master` and is not yet published to npm.
   is now claimed at the moment of asking, and given back by a file that does not land.
 - The tally kept every client it had ever seen: pruning only happened for a key that came
   back, so a thousand one-off visitors left a thousand entries for good.
+- The ES bundle was shipped with its newlines: Vite shortens identifiers in library mode but
+  leaves the ES output laid out over its lines, which cost six kilobytes of gzip to anyone
+  loading it from a script tag rather than through a bundler. 22.1 KB gzipped, now 16.0.
+- Both READMEs claimed 13 KB of JS gzipped. True when the package was written, and left
+  alone while it grew to 22. A test now compares the sentence with the build.
 
 ## 2.0.0
 

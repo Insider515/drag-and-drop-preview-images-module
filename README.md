@@ -41,7 +41,7 @@ option block; leave it out and that code never runs:
 - **[Try again after a failure](#trying-again-after-a-failure)** — automatically, or on a
   button, and only for the failures that are about the connection rather than the file.
 
-Size and shape: 13 KB of JS and 2 KB of CSS gzipped on the page, zero runtime
+Size and shape: 16 KB of JS and 2 KB of CSS gzipped on the page, zero runtime
 dependencies. The server half is a single `(req, res)` function that mounts in Express,
 AdonisJS, Fastify, Nest or bare `node:http`, and its only dependency is a multipart
 parser. Five languages ship with it — English (the default), Ukrainian, Spanish, German
