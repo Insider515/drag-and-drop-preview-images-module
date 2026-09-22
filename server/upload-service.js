@@ -136,8 +136,11 @@ export class UploadService {
 
     // Everything for this file — the temp copy included — happens inside the
     // directory it is going to, so the rename that finishes it is a move
-    // within one directory rather than across the tree.
-    const dir = await this.#directoryFor(options.subdir ?? null);
+    // within one directory rather than across the tree. With a backend there
+    // is no such move and nothing stays here, so the session's folder is not
+    // made at all: made and emptied, it would leave one directory per visitor
+    // standing on a disk the files never landed on.
+    const dir = await this.#directoryFor(this.storage ? null : (options.subdir ?? null));
     const temp = path.join(dir, `${TEMP_PREFIX}${crypto.randomUUID()}`);
     const cap = Math.min(this.limits.maxFileSize, options.maxBytes ?? Infinity);
 
@@ -194,7 +197,9 @@ export class UploadService {
     if (this.storage) {
       let sent;
       try {
-        sent = await this.#send(temp, name, outcome, options.identity ?? null);
+        sent = await this.#send(
+          temp, name, outcome, options.identity ?? null, options.subdir ?? null,
+        );
       } finally {
         // Whether the backend took it or refused it, this copy has done its
         // job. Leaving it behind on a failure is how a disk fills up with the
@@ -230,33 +235,58 @@ export class UploadService {
    * The temp file stays until the backend has said yes. A failure there leaves
    * nothing behind and nothing half-stored — the caller deletes the temp copy
    * and the batch reports the file as failed, the same as any other refusal.
+   *
+   * The name is settled the same way as on disk: `exists()` is a cheap look
+   * ahead that saves sending a body which would be refused, and the decision
+   * is the write itself refusing a key that is taken. Asking and then writing
+   * is two questions with a gap between them — measured, four uploads of one
+   * name sent at once left one object in the bucket and told all four they
+   * had been stored.
+   *
+   * @param {string} subdir the session's folder, or null — the same value the
+   *   disk path files under, so `scope: 'label'` stays flat in both
    */
-  async #send(temp, name, outcome, identity) {
+  async #send(temp, name, outcome, identity, subdir) {
     const chosen = this.renameHook
       ? assertValidName(this.renameHook(name, { type: outcome.type, identity }))
       : name;
-    const prefixed = identity ? `${identity}/${chosen}` : chosen;
+    const folder = subdir ? `${subdir}/` : '';
+    const overwrite = this.onConflict === 'overwrite';
 
-    let candidate = prefixed;
-    if (this.onConflict !== 'overwrite' && typeof this.storage.exists === 'function') {
-      for (let attempt = 1; attempt < 100; attempt += 1) {
+    for (let attempt = 1; attempt <= 100; attempt += 1) {
+      const bare = attempt === 1 ? chosen : withSuffix(chosen, attempt);
+      const candidate = `${folder}${bare}`;
+
+      if (!overwrite && typeof this.storage.exists === 'function') {
         // eslint-disable-next-line no-await-in-loop
-        if (!(await this.storage.exists(candidate))) break;
-        if (this.onConflict === 'refuse') {
-          throw new UploadError(409, 'EXISTS', `“${candidate}” already exists`, { name: candidate });
+        if (await this.storage.exists(candidate)) {
+          if (this.onConflict === 'refuse') {
+            throw new UploadError(409, 'EXISTS', `“${candidate}” already exists`, { name: candidate });
+          }
+          continue;
         }
-        candidate = identity
-          ? `${identity}/${withSuffix(chosen, attempt + 1)}`
-          : withSuffix(chosen, attempt + 1);
+      }
+
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const sent = await this.storage.put(candidate, temp, {
+          type: outcome.type,
+          size: outcome.size,
+          sha256: outcome.sha256,
+          overwrite,
+        });
+        // The bare name, as the disk path reports it: the folder belongs to
+        // the key, not to what the file is called.
+        return { name: bare, ...sent };
+      } catch (err) {
+        // A backend that claims keys atomically says the key was taken while
+        // this was in flight. Anything else is a real failure.
+        if (overwrite || err?.code !== 'EXISTS') throw err;
+        if (this.onConflict === 'refuse') throw err;
       }
     }
 
-    const sent = await this.storage.put(candidate, temp, {
-      type: outcome.type,
-      size: outcome.size,
-      sha256: outcome.sha256,
-    });
-    return { name: candidate, ...sent };
+    throw new UploadError(409, 'EXISTS', `“${chosen}” already exists`, { name: chosen });
   }
 
   /**

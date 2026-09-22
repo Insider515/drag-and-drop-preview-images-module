@@ -197,13 +197,20 @@ export interface UploadRequest extends IncomingMessage {
  * about bytes that have already left.
  */
 export interface UploadStorage {
-  /** Send one finished file. Returns what it is called and where it can be read. */
+  /**
+   * Send one finished file. Returns what it is called and where it can be read.
+   *
+   * Unless `about.overwrite`, a name that is taken must be refused by throwing
+   * an `UploadError(409, 'EXISTS', …)`: the next name is then tried. Deciding
+   * from `exists()` alone cannot hold, since another upload fits between the
+   * question and the answer.
+   */
   put(
     name: string,
     path: string,
-    about: { type: string; size: number; sha256: string }
+    about: { type: string; size: number; sha256: string; overwrite?: boolean }
   ): Promise<{ key?: string; url?: string; etag?: string | null }>;
-  /** Whether something is already there, so a name is not taken twice. */
+  /** A look ahead that saves sending a body which would be refused. Optional. */
   exists?(name: string): Promise<boolean>;
 }
 
@@ -222,6 +229,12 @@ export interface S3StorageOptions {
   acl?: string;
   /** How to build the URL handed back, for a bucket served through a CDN. */
   publicUrl?: (key: string) => string;
+  /**
+   * Claim a key atomically with `If-None-Match: *`, so two uploads of one name
+   * cannot write over each other. True by default; turn it off only for a
+   * service that rejects the header, and know that the race returns with it.
+   */
+  conditionalWrites?: boolean;
 }
 
 /** An S3 backend that signs its own requests; no SDK is involved. */

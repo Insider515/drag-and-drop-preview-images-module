@@ -31,6 +31,10 @@ import { EMPTY_BODY_SHA256, encodePath, sha256, signRequest } from '../sign-v4.j
  * @param {string} [options.acl] e.g. 'public-read'; left out, the bucket decides
  * @param {(name: string) => string} [options.publicUrl] how to build the URL
  *   handed back to the client, for a bucket served through a CDN
+ * @param {boolean} [options.conditionalWrites] claim a key atomically with
+ *   `If-None-Match: *`, so two uploads of one name cannot write over each
+ *   other. True by default. Turn it off only for a service that rejects the
+ *   header outright — the cost of doing so is that the race comes back.
  */
 export function createS3Storage(options = {}) {
   for (const required of ['bucket', 'region', 'accessKeyId', 'secretAccessKey']) {
@@ -39,7 +43,7 @@ export function createS3Storage(options = {}) {
 
   const {
     bucket, region, accessKeyId, secretAccessKey, sessionToken,
-    prefix = '', acl, publicUrl,
+    prefix = '', acl, publicUrl, conditionalWrites = true,
   } = options;
 
   const base = options.endpoint
@@ -51,15 +55,19 @@ export function createS3Storage(options = {}) {
   const folder = prefix ? `${String(prefix).replace(/^\/+|\/+$/g, '')}/` : '';
 
   return {
-    /** What a stored file is called from the outside. */
-    describe: (name) => `${folder}${name}`,
-
     /**
      * Send one finished file.
      *
+     * The key is claimed with the write itself rather than by asking first.
+     * `exists()` and then `put()` is two questions with a gap in the middle,
+     * and the gap is wide enough for another upload: measured, four requests
+     * sent at once under one name left one object in the bucket and told all
+     * four they had been stored. `If-None-Match: *` makes the service answer
+     * 412 instead, which is the same guarantee `O_EXCL` gives on disk.
+     *
      * @param {string} name the name it was given
      * @param {string} from the temp file holding it
-     * @param {{type: string, size: number}} about
+     * @param {{type: string, size: number, overwrite?: boolean}} about
      */
     async put(name, from, about) {
       const body = await fs.readFile(from);
@@ -78,6 +86,7 @@ export function createS3Storage(options = {}) {
           'content-type': about.type || 'application/octet-stream',
           'content-length': String(body.length),
           ...(acl ? { 'x-amz-acl': acl } : {}),
+          ...(conditionalWrites && !about.overwrite ? { 'if-none-match': '*' } : {}),
         },
         bodyHash: sha256(body),
         accessKeyId,
@@ -94,6 +103,24 @@ export function createS3Storage(options = {}) {
         // The far end being unreachable is a failure of the moment, and the
         // code says so: the widget repeats those and leaves the rest alone.
         throw new UploadError(502, 'INTERNAL', 'The storage service could not be reached');
+      }
+
+      if (response.status === 412) {
+        // The key was taken between this request being prepared and it landing.
+        // The caller picks the next name and comes back; it is not an error the
+        // person uploading ever sees.
+        throw new UploadError(409, 'EXISTS', `“${key}” already exists`, { name: key });
+      }
+
+      if (response.status === 501) {
+        // Some S3-compatible services do not implement conditional writes and
+        // say so rather than ignoring the header. Better to stop and say which
+        // setting turns it off than to quietly drop the protection.
+        const error = new UploadError(500, 'INTERNAL', 'The file could not be stored');
+        error.detail = 'The storage service does not support conditional writes; '
+          + 'pass conditionalWrites: false to createS3Storage, and note that two '
+          + 'uploads of one name can then write over each other.';
+        throw error;
       }
 
       if (!response.ok) {

@@ -281,6 +281,47 @@ describe('s3: against a real server', {
       'the first file was written over');
   });
 
+  test('four uploads of one name at once all survive', async () => {
+    // The one a stubbed fetch cannot answer. Measured before the write became
+    // a claim: four requests sent together under one name left one object in
+    // the bucket, and all four clients were told 200 — three photographs gone,
+    // with nothing anywhere saying so.
+    const { base } = await endpoint(store);
+
+    const answers = await Promise.all(['one', 'two', 'three', 'four'].map((mark) => {
+      const body = new FormData();
+      body.append('images[]', new Blob([png(mark)]), 'crowd.png');
+      return fetch(base, { method: 'POST', body }).then((response) => response.json());
+    }));
+
+    const names = answers.map((answer) => answer.uploaded?.[0]?.name);
+    assert.equal(new Set(names).size, 4, `four uploads came back as ${names.join(', ')}`);
+
+    for (const name of names) {
+      // eslint-disable-next-line no-await-in-loop
+      const back = await readBack(`${run}/${name}`);
+      assert.equal(back.status, 200, `${name} is not in the bucket`);
+    }
+  });
+
+  test('the answer says where the file went', async () => {
+    const { base } = await endpoint(createS3Storage({
+      ...config,
+      prefix: `${run}/told`,
+      publicUrl: (key) => `https://files.example/${key}`,
+    }));
+
+    const body = new FormData();
+    body.append('images[]', new Blob([png('told')]), 'told.png');
+    const json = await (await fetch(base, { method: 'POST', body })).json();
+    const file = json.uploaded[0];
+
+    assert.equal(file.key, `${run}/told/told.png`);
+    assert.equal(file.path, `https://files.example/${run}/told/told.png`,
+      'publicUrl was worked out and thrown away');
+    assert.ok(file.etag, 'the etag never reached the client');
+  });
+
   test('a storage failure leaves nothing behind on local disk', async () => {
     const broken = createS3Storage({ ...config, bucket: 'no-such-bucket-here' });
     const { base, root } = await endpoint(broken);

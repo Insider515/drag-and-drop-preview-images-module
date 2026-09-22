@@ -162,6 +162,67 @@ describe('s3: what goes on the wire', () => {
   });
 });
 
+describe('s3: claiming a key rather than asking about it', () => {
+  test('the write carries the condition that makes the claim', async () => {
+    const bytes = png(512);
+    await storage().put('a.png', await tempFile(bytes), { type: 'image/png', size: bytes.length });
+
+    assert.equal(requests.at(-1).headers['if-none-match'], '*');
+    // Signed, not merely sent: a header the signature does not cover is a
+    // header the service is entitled to ignore.
+    assert.match(requests.at(-1).headers.authorization, /SignedHeaders=[^,]*if-none-match/);
+  });
+
+  test('a key taken in the meantime comes back as EXISTS, not as a failure', async () => {
+    answer = (req) => (req.method === 'PUT' ? { status: 412, body: '' } : null);
+    const bytes = png(512);
+
+    const err = await storage()
+      .put('a.png', await tempFile(bytes), { type: 'image/png', size: bytes.length })
+      .then(() => null, (e) => e);
+
+    assert.equal(err.code, 'EXISTS');
+    assert.equal(err.status, 409);
+  });
+
+  test('overwrite asks for no condition, because it means what it says', async () => {
+    const bytes = png(512);
+    await storage().put('a.png', await tempFile(bytes), {
+      type: 'image/png', size: bytes.length, overwrite: true,
+    });
+
+    assert.equal(requests.at(-1).headers['if-none-match'], undefined);
+  });
+
+  test('a service that cannot do it can be told not to be asked', async () => {
+    const bytes = png(512);
+    await createS3Storage({
+      bucket: 'photos',
+      region: 'eu-central-1',
+      accessKeyId: 'AKIDEXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+      endpoint,
+      conditionalWrites: false,
+    }).put('a.png', await tempFile(bytes), { type: 'image/png', size: bytes.length });
+
+    assert.equal(requests.at(-1).headers['if-none-match'], undefined);
+  });
+
+  test('a service that refuses the condition says which setting turns it off', async () => {
+    // Quietly dropping the header would leave the race back in place while the
+    // logs said everything was fine.
+    answer = (req) => (req.method === 'PUT' ? { status: 501, body: 'NotImplemented' } : null);
+    const bytes = png(512);
+
+    const err = await storage()
+      .put('a.png', await tempFile(bytes), { type: 'image/png', size: bytes.length })
+      .then(() => null, (e) => e);
+
+    assert.equal(err.message, 'The file could not be stored', 'the client learns nothing extra');
+    assert.match(err.detail, /conditionalWrites: false/);
+  });
+});
+
 describe('s3: when it goes wrong', () => {
   test('a refusal does not hand the service’s answer to the client', async () => {
     // That XML names the bucket and the key, which is nobody else's business.
@@ -256,11 +317,47 @@ describe('s3: as the upload service uses it', () => {
     assert.equal(err.status, 409);
   });
 
-  test('a session becomes a folder in the bucket too', async () => {
+  test('the service refusing the key makes the upload service try the next name', async () => {
+    // The whole point of the condition: the backend, not a look beforehand,
+    // decides whether a name was free.
+    let taken = true;
+    answer = (req) => {
+      if (req.method === 'HEAD') return { status: 404 };   // nothing sees it coming
+      if (req.method === 'PUT' && taken) { taken = false; return { status: 412 }; }
+      return null;
+    };
     const service = new UploadService({ root, storage: storage() });
-    const stored = await service.store('a.png', streamOf(png(1024)), { identity: 'anna' });
+    const stored = await service.store('a.png', streamOf(png(1024)));
+
+    assert.equal(stored.name, 'a (2).png', 'it wrote over the key the service refused');
+    assert.equal(stored.key, 'a (2).png');
+  });
+
+  test('a session becomes a folder in the bucket too', async () => {
+    // The folder comes from `subdir`, which is what the disk path files under,
+    // so `scope: 'label'` — which sets no subdir — stays flat in both places.
+    const service = new UploadService({ root, storage: storage() });
+    const stored = await service.store('a.png', streamOf(png(1024)), {
+      identity: 'anna',
+      subdir: 'anna',
+    });
     assert.equal(stored.key, 'anna/a.png');
+    assert.equal(stored.name, 'a.png', 'the folder belongs to the key, not to the name');
     assert.equal(requests.at(-1).url, '/photos/anna/a.png');
+  });
+
+  test('a session that is only a label does not become a folder', async () => {
+    // Measured before this: `scope: 'label'` left the disk flat and gave the
+    // bucket a folder per session anyway, so the two disagreed about where a
+    // file had gone — and an id like `a/b`, which the directory scope refuses
+    // outright, quietly made nested keys.
+    const service = new UploadService({ root, storage: storage() });
+    const stored = await service.store('a.png', streamOf(png(1024)), {
+      identity: 'a/b',
+      subdir: null,
+    });
+    assert.equal(stored.key, 'a.png');
+    assert.equal(requests.at(-1).url, '/photos/a.png');
   });
 
   test('a failure to store leaves nothing behind on either side', async () => {

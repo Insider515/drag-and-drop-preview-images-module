@@ -569,7 +569,7 @@ compress: { maxWidth: 1600, format: 'image/webp' }   // usually a large saving
 | Setting | Default | What it does |
 |---|---|---|
 | `maxWidth`, `maxHeight` | — | The box to fit inside. Either on its own is enough |
-| `fit` | `'contain'` | `'contain'` fits inside the box, `'cover'` fills it |
+| `fit` | `'contain'` | `'contain'` fits inside the box; `'cover'` fills it, and overflows one side |
 | `quality` | `'auto'` | `'auto'` (0.85), a number, or `'lossless'` (metadata only) |
 | `format` | `'auto'` | `'auto'` keeps the format; or `image/jpeg`, `image/png`, `image/webp` |
 | `stripMetadata` | `true` | Drop EXIF, XMP, IPTC, comments |
@@ -577,6 +577,12 @@ compress: { maxWidth: 1600, format: 'image/webp' }   // usually a large saving
 
 A picture already inside the box is left at its own size — enlarging adds bytes and invents
 detail that was never there.
+
+`'cover'` is the one that can come out larger than the box, and deliberately: it scales until
+the shorter side fills the box, which leaves the longer one hanging over. A 1000×4000 photo
+in an 800×600 box is 800×3200 — nothing is cropped, because a widget that quietly cut people
+out of their own photographs would be worse than one that hands back a tall picture. Where
+the result must fit, `'contain'` is the setting that promises it.
 
 ### Three things it refuses to do
 
@@ -1128,6 +1134,7 @@ createS3Storage({
   prefix: 'incoming',                                   // a folder in the bucket
   acl: 'public-read',                                   // left out, the bucket decides
   publicUrl: (key) => `https://cdn.example/${key}`,      // for a CDN in front
+  conditionalWrites: true,                              // the default; see below
 });
 ```
 
@@ -1149,24 +1156,47 @@ Two methods, and only the first is required:
 
 ```js
 const storage = {
-  async put(name, filePath, { type, size, sha256 }) {
+  async put(name, filePath, { type, size, sha256, overwrite }) {
     // filePath is a local temp file, already checked. Return where it landed.
+    // Unless `overwrite`, refuse a name that is taken by throwing an
+    // UploadError(409, 'EXISTS', …) — the next name is then tried.
     return { key: name, url: `https://files.example/${name}` };
   },
   async exists(name) {
-    return false;   // used to avoid taking a name twice; skip it and names collide
+    return false;   // optional: saves sending a body that would be refused
   },
 };
 ```
 
+**The name is claimed by the write, not by the question before it.** `exists()` and then
+`put()` is two questions with a gap in the middle, and the gap is wide enough for somebody
+else: measured, four uploads of one name sent at once left **one** object in the bucket and
+told all four they had been stored. The S3 backend therefore writes with `If-None-Match: *`,
+which makes the service answer 412 when the key is taken — the same guarantee `O_EXCL` gives
+on disk. `exists()` stays as a cheap look ahead that saves uploading a body which would be
+refused, and a backend of your own may leave it out.
+
+`conditionalWrites: false` turns that off for a service that rejects the header outright. It
+is the only way to lose the protection, and the cost of it is the race above.
+
 `onConflict` works the same as on disk: `rename` suffixes, `refuse` answers 409, `overwrite`
-does not ask. With `sessions` on, the session id becomes a folder in the bucket exactly as
-it does on disk.
+does not ask — and with `overwrite` no condition is sent, since it means what it says. With
+`sessions` and `scope: 'directory'` the session id becomes a folder in the bucket exactly as
+it does on disk; with `scope: 'label'` both stay flat.
 
 ### What the client is told
 
-The answer's `path` becomes the URL rather than a filesystem path, and `key` and `etag` join
-it. Nothing about your bucket's internals reaches whoever is uploading: a refusal from the
+```json
+{ "name": "photo.png", "original": "photo.png", "size": 51234, "type": "image/png",
+  "key": "incoming/photo.png", "path": "https://cdn.example/incoming/photo.png",
+  "etag": "\"9b2c…\"" }
+```
+
+`path` is the URL — `publicUrl` where you gave one, the bucket's own otherwise — and `key`
+is where it sits in the bucket. A local `root` reports none of the three: the answer would
+be a path on your filesystem, which is nobody's business but yours.
+
+Nothing about your bucket's internals reaches whoever is uploading: a refusal from the
 service is logged with its reason through `onWarning` and reported to the client as a plain
 "the file could not be stored".
 
@@ -1245,7 +1275,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 567 tests, and 8 more with an S3 server (below)
+npm test             # 574 tests, and 10 more with an S3 server (below)
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

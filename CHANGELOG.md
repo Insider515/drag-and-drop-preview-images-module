@@ -57,6 +57,26 @@ Everything below has landed on `master` and is not yet published to npm.
 
 ### Fixed
 
+- **Two uploads of one name at once left one file in the bucket and told both they had been
+  stored.** The S3 path asked `exists()` and then wrote, which is two questions with a gap in
+  the middle; the disk path has always claimed its name with `O_EXCL`. Measured: four
+  requests sent together under one name left one object and three photographs gone, every
+  answer a 200. The write now carries `If-None-Match: *`, so the service answers 412 and the
+  next name is tried — the same guarantee, from the service rather than from hope.
+  `conditionalWrites: false` turns it off for a service that rejects the header.
+- The answer said nothing about where a file had gone. `key`, `path` and `etag` reach the
+  client for a storage backend, as the README had been claiming all along, and `publicUrl`
+  is no longer worked out and thrown away. A local `root` still reports none of them: that
+  answer would be a path on your filesystem.
+- `sessions` with `scope: 'label'` gave the bucket a folder per session anyway, although it
+  leaves the disk flat and the README promises "one flat folder". The folder now comes from
+  the same value on both paths. With it goes a smaller hole: under `label` a session id was
+  not checked for being a single segment, so an id like `a/b` — which `scope: 'directory'`
+  refuses outright — quietly made nested keys.
+- A backend meant the session's directory was created on local disk and then left there
+  empty, one per visitor, on a disk none of the files landed on.
+- Both READMEs described `fit: 'cover'` as filling the box without saying it overflows it. A
+  1000×4000 picture in an 800×600 box comes out 800×3200, deliberately — nothing is cropped.
 - A file refused because the per-client budget was spent was treated as refused for good:
   the Retry button hid itself and `retry()` passed it over, so the only way forward was to
   empty the queue and choose the same files again — although the budget fills up when its

@@ -412,6 +412,16 @@ export function createUploadHandler(options = {}) {
               original: info.filename,
               size: stored.size,
               type: stored.type,
+              // Where it went, when that is somewhere the client can be told
+              // about. A local root is not: the answer would be a path on your
+              // filesystem. A bucket is the opposite — the key and the URL are
+              // the whole point of having sent it there, and dropping them left
+              // the host to guess at a name it had already been given.
+              ...(stored.key === undefined ? {} : {
+                key: stored.key,
+                path: stored.path,
+                etag: stored.etag ?? null,
+              }),
               // Who it was filed under, so the host can record ownership
               // without working it out from the request a second time.
               ...(identity === null ? {} : { owner: identity }),
