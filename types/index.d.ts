@@ -238,6 +238,15 @@ export interface RetryOptions {
 
 /** Is this failure about the moment rather than about the file? */
 export declare function isRetryable(code: string, status?: number): boolean;
+
+/**
+ * Is another attempt worth offering at all?
+ *
+ * Wider than {@link isRetryable}: a spent per-client budget is not repeated
+ * unprompted, since it refills on the server's clock, but the Try again button
+ * appears for it.
+ */
+export declare function worthTryingAgain(code: string, status?: number): boolean;
 export declare function normaliseRetry(raw: RetryOptions | null | undefined): object | null;
 export declare function delayBefore(config: object, attempt: number): number;
 

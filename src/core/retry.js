@@ -41,6 +41,34 @@ export function isRetryable(code, status = 0) {
   return false;
 }
 
+/**
+ * Failures that pass on somebody else's clock.
+ *
+ * The per-client budget refills on the server's, a minute by default, and the
+ * schedule here is measured in seconds. Repeating on that schedule spends the
+ * attempts without getting anywhere, so these are not repeated unprompted —
+ * they are what the Try again button is for.
+ */
+const WORTH_WAITING_FOR = new Set([
+  'QUOTA',        // the budget for this client is spent until its window passes
+]);
+
+/**
+ * Is another attempt worth offering at all?
+ *
+ * Wider than {@link isRetryable}, which answers the narrower question of
+ * whether to repeat now and unprompted. A spent budget lets the same files
+ * through once its window has passed, so treating it as final hides the Try
+ * again button and leaves the person no way forward but emptying the queue and
+ * choosing the files a second time.
+ *
+ * @param {string} code the code from the server or the uploader
+ * @param {number} [status] the HTTP status, where there was one
+ */
+export function worthTryingAgain(code, status = 0) {
+  return isRetryable(code, status) || WORTH_WAITING_FOR.has(code);
+}
+
 /** Read the `retry` block, or null when the host did not ask for retries. */
 export function normaliseRetry(raw) {
   if (!raw) return null;

@@ -1,6 +1,6 @@
 import { compressFile, normaliseCompress } from './core/compress.js';
 import { createTranslator, resolveLocale } from './core/i18n.js';
-import { delayBefore, isRetryable, normaliseRetry } from './core/retry.js';
+import { delayBefore, isRetryable, normaliseRetry, worthTryingAgain } from './core/retry.js';
 import { DEFAULT_LOCALE, LOCALES } from './locales/index.js';
 import { buildThemeCss } from './core/theme.js';
 import { formatBytes } from './core/format.js';
@@ -1074,7 +1074,7 @@ export class DropPreview {
    */
   async retry() {
     const again = this.#items.filter(
-      (item) => item.status === 'error' && isRetryable(item.error?.code, item.error?.status ?? 0)
+      (item) => item.status === 'error' && worthTryingAgain(item.error?.code, item.error?.status ?? 0)
     );
     if (again.length === 0 || this.#busy) return null;
 
@@ -1089,7 +1089,7 @@ export class DropPreview {
   /** Whether anything in the queue failed for a reason worth repeating. */
   get retryable() {
     return this.#items.some(
-      (item) => item.status === 'error' && isRetryable(item.error?.code, item.error?.status ?? 0)
+      (item) => item.status === 'error' && worthTryingAgain(item.error?.code, item.error?.status ?? 0)
     );
   }
 

@@ -2,7 +2,7 @@ import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DropPreview } from '../src/drop-preview.js';
-import { delayBefore, isRetryable, normaliseRetry } from '../src/core/retry.js';
+import { delayBefore, isRetryable, normaliseRetry, worthTryingAgain } from '../src/core/retry.js';
 import { installDom, uninstallDom, settled, image, FakeXHR } from './helpers/fake-dom.js';
 
 let dom;
@@ -55,6 +55,26 @@ describe('retry: which failures are worth repeating', () => {
     assert.equal(isRetryable('HTTP_ERROR', 404), false);
     assert.equal(isRetryable('HTTP_ERROR', 403), false);
     assert.equal(isRetryable('HTTP_ERROR', 0), false);
+  });
+
+  test('a spent budget is not repeated unprompted, but is worth another go', () => {
+    // The budget refills on the server's clock — a minute by default — while
+    // the schedule here is measured in seconds. Repeating on it spends the
+    // attempts without getting anywhere; offering the button is the other
+    // question, and the answer to that one is yes.
+    assert.equal(isRetryable('QUOTA', 429), false);
+    assert.equal(worthTryingAgain('QUOTA', 429), true);
+  });
+
+  test('everything repeated unprompted is also worth another go', () => {
+    for (const code of ['NETWORK', 'INTERNAL', 'BUSY', 'SCAN_FAILED', 'NO_SPACE']) {
+      assert.equal(worthTryingAgain(code), true, code);
+    }
+    assert.equal(worthTryingAgain('HTTP_ERROR', 503), true);
+    assert.equal(worthTryingAgain('HTTP_ERROR', 404), false);
+    assert.equal(worthTryingAgain('NOT_AN_IMAGE'), false);
+    assert.equal(worthTryingAgain('TOO_LARGE'), false);
+    assert.equal(worthTryingAgain(undefined), false);
   });
 
   test('an unknown code is not repeated on the off-chance', () => {
@@ -286,6 +306,63 @@ describe('retry: by hand, after everything has stopped', () => {
 
     inFlight.respond(200, {});
     await first;
+    drop.destroy();
+  });
+});
+
+describe('retry: a budget that is spent rather than a file that is wrong', () => {
+  // The server answers 429 in two shapes: refused before the body was read,
+  // which names the code at the top, and refused while it was being read,
+  // which names it per file. Both mean the same thing to the person looking at
+  // the tile, so both have to leave a way back.
+  for (const [shape, payload] of [
+    ['refused before the body was read', {
+      code: 'QUOTA',
+      error: 'You have uploaded too much for now, try again later',
+    }],
+    ['refused while the files were being read', {
+      uploaded: [],
+      failures: [{
+        name: 'a.png',
+        code: 'QUOTA',
+        error: 'You have uploaded too much for now, try again later',
+        params: null,
+      }],
+    }],
+  ]) {
+    test(`${shape}: the button is there and nothing repeated by itself`, async () => {
+      const drop = await ready(['a.png'], { retry: { attempts: 3, delay: 0 } });
+      const repeated = [];
+      drop.on('retry', () => repeated.push(1));
+
+      const done = drop.upload();
+      await settled();
+      FakeXHR.last.respond(429, payload);
+      await drain();
+      await done;
+
+      assert.deepEqual(statuses(drop), ['error']);
+      assert.deepEqual(repeated, [], 'it repeated on a clock it has no way of knowing');
+      assert.equal(drop.retryable, true, 'the only way back was to empty the queue');
+      assert.equal(drop.retryButton.hidden, false);
+      drop.destroy();
+    });
+  }
+
+  test('pressing the button once the window has passed sends the files again', async () => {
+    const drop = await ready(['a.png']);
+    const done = drop.upload();
+    await settled();
+    FakeXHR.last.respond(429, { code: 'QUOTA', error: 'You have uploaded too much for now' });
+    await done;
+
+    drop.retryButton.fire('click');
+    await settled();
+    FakeXHR.last.respond(200, { uploaded: [{ name: 'a.png' }], failures: [] });
+    await drain();
+
+    assert.deepEqual(statuses(drop), ['done']);
+    assert.equal(drop.retryButton.hidden, true);
     drop.destroy();
   });
 });

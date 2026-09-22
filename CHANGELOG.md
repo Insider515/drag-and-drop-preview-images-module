@@ -57,6 +57,12 @@ Everything below has landed on `master` and is not yet published to npm.
 
 ### Fixed
 
+- A file refused because the per-client budget was spent was treated as refused for good:
+  the Retry button hid itself and `retry()` passed it over, so the only way forward was to
+  empty the queue and choose the same files again — although the budget fills up when its
+  window passes. `worthTryingAgain` is the wider question the button now asks; the automatic
+  retry still does not repeat it, since the window is a minute by default and the schedule
+  here is seconds.
 - A batch refused only because the per-client budget ran out answered 400 when the budget
   ran out while the body was being read, and 429 when it ran out before. The same refusal,
   two different answers, measured at one request in sixty of eight sent at once — and 400

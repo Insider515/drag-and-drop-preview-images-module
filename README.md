@@ -640,6 +640,7 @@ either useless or annoying:
 | | |
 |---|---|
 | **Worth repeating** | `NETWORK`, `INTERNAL`, `BUSY`, `SCAN_FAILED`, `NO_SPACE`, and any `HTTP_ERROR` with a 5xx status |
+| **Worth another go, but not unprompted** | `QUOTA` |
 | **Not** | `TOO_LARGE`, `NOT_AN_IMAGE`, `TYPE_NOT_ALLOWED`, `INFECTED`, `INVALID_NAME`, `DENIED`, a 4xx — and `ABORTED`, because that was the person's own decision |
 
 The connection dropping is about the moment. The file being too large is about the file:
@@ -649,6 +650,14 @@ tile.
 
 In a mixed batch this matters. Two files fail, one because the gateway answered 502 and one
 because it is a text file with a `.png` name — only the first goes back on the wire.
+
+`QUOTA` is the third case, and it is why `isRetryable` has a wider companion,
+`worthTryingAgain`. A spent per-client budget fills up again when its window passes — a
+minute by default — on a clock this side cannot read, so repeating at 1 s and 2 s would only
+spend the attempts. It is therefore never sent again by itself, while the **Retry** button
+does appear for it: waiting a moment and pressing it is the thing that actually works.
+Treating it as final hid the button and left the person no way forward but emptying the
+queue and choosing the same files a second time.
 
 ### The settings
 
@@ -1236,7 +1245,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 562 tests, and 8 more with an S3 server (below)
+npm test             # 567 tests, and 8 more with an S3 server (below)
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
