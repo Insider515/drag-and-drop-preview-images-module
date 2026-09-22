@@ -41,6 +41,11 @@ Everything below has landed on `master` and is not yet published to npm.
   the hash leaves the server.
 - **A dimension limit on the server.** A 30 KB PNG declaring 40000×40000 is refused while it
   is still streaming; the dimensions are read from the header without decoding anything.
+- **The S3 backend is tested against a real server.** Eight tests talk to MinIO rather than
+  to a stubbed `fetch`: a path signed one way and sent another agrees with a test that checks
+  it the same wrong way, and only a server says 403. CI starts one on every push; on a machine
+  without one the tests skip themselves. They were checked by breaking the path encoding on
+  purpose, which failed two of them.
 
 ### Changed
 
@@ -52,6 +57,15 @@ Everything below has landed on `master` and is not yet published to npm.
 
 ### Fixed
 
+- A batch refused only because the per-client budget ran out answered 400 when the budget
+  ran out while the body was being read, and 429 when it ran out before. The same refusal,
+  two different answers, measured at one request in sixty of eight sent at once — and 400
+  says the request was malformed and carries no `Retry-After`, so nothing told the client
+  when to come back. Both paths answer 429 with it now.
+- Both READMEs said uploads were one request for the whole queue and that there was no
+  chunking. That stopped being true when `filesPerRequest` and resuming landed: a dropped
+  connection picks up at the file it stopped on. There is still no chunking inside a file,
+  which is what the line says now.
 - An upload the client abandoned mid-part left its temporary file behind for ever, because
   busboy goes silent when a request dies and nothing settled the write.
 - An error handler that threw took the response with it, leaving the socket open until the

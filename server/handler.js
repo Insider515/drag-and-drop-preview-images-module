@@ -135,6 +135,25 @@ export function createUploadHandler(options = {}) {
   // Spans requests, unlike maxFiles and maxRequestSize, which is the point:
   // one file to a request makes a per-request cap on files meaningless.
   const quotaConfig = normaliseQuota(limits.perClient);
+
+  /**
+   * What a finished batch answers with.
+   *
+   * A batch nothing landed in is a refusal, and which refusal it is matters:
+   * the budget running out is answered 429 with a Retry-After whether it was
+   * noticed before the body was read or while it was being read. Measured
+   * before this: one request in sixty of eight sent at once was told 400,
+   * because the early check and the per-file claim reported the same refusal
+   * in two different ways — and 400 tells the widget its request was malformed
+   * rather than that it should wait.
+   */
+  const statusFor = (result, res) => {
+    if (result.uploaded.length > 0 || result.failures.length === 0) return 200;
+    if (!quotaConfig || !result.failures.every((failure) => failure.code === 'QUOTA')) return 400;
+    res.setHeader('Retry-After', String(Math.ceil(quotaConfig.windowMs / 1000)));
+    return 429;
+  };
+
   const quota = quotaConfig ? createQuota(quotaConfig, options.now) : null;
   const warn = (message, detail) => options.onWarning?.(message, detail);
 
@@ -209,8 +228,7 @@ export function createUploadHandler(options = {}) {
     inFlight += 1;
     try {
       const result = await readMultipart(req, identity, budgetKey);
-      const status = result.uploaded.length === 0 && result.failures.length > 0 ? 400 : 200;
-      res.status(status).json(result);
+      res.status(statusFor(result, res)).json(result);
     } finally {
       inFlight -= 1;
     }

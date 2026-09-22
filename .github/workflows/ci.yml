@@ -36,3 +36,52 @@ jobs:
       - run: npm test
 
       - run: npm run typecheck
+
+  # The S3 backend against something that actually answers. Signing is the part
+  # a stubbed fetch cannot vouch for: a request signed wrong agrees with a test
+  # that checks it the same wrong way, and only a server says 403.
+  s3:
+    runs-on: ubuntu-latest
+
+    env:
+      # This server lives for the length of this job and is reachable from
+      # nowhere else. The credentials are here in the open because they guard
+      # nothing; no real bucket is involved.
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_BUCKET: uploads
+      S3_KEY: ddpuser
+      S3_SECRET: ddppassword123
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start an S3 server and give it a bucket
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=$S3_KEY -e MINIO_ROOT_PASSWORD=$S3_SECRET \
+            quay.io/minio/minio server /data
+          for _ in $(seq 1 30); do
+            curl -sf $S3_ENDPOINT/minio/health/live > /dev/null && break
+            sleep 2
+          done
+          docker run --rm --network host --entrypoint /bin/sh quay.io/minio/mc \
+            -c "mc alias set local $S3_ENDPOINT $S3_KEY $S3_SECRET && mc mb -p local/$S3_BUCKET"
+
+      # The whole suite, not only the S3 file. A job that ran the live tests and
+      # one that quietly skipped them both end green, since skipping is what
+      # they do without a server — so the output is checked for it.
+      - name: Run the suite, and prove the live tests did not skip
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee suite.log
+          if grep -q 'SKIP needs a running S3' suite.log; then
+            echo 'The S3 tests skipped themselves: no server, or the variables are unset.'
+            exit 1
+          fi

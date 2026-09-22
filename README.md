@@ -1006,7 +1006,9 @@ the remote address otherwise. A form field would not do: whoever is uploading wr
 **Refused before the body is read.** `Content-Length` is the client's own claim, so it is
 used only for the early answer — under-reporting loses them nothing but that, since the
 budget caps the file again while its bytes are read. A batch that runs out part-way keeps
-what landed and marks the rest `QUOTA`.
+what landed and marks the rest `QUOTA`. A batch nothing landed in is answered 429 with a
+`Retry-After`, whether the budget ran out before the body was read or while it was being
+read — the same refusal should not arrive as two different statuses.
 
 **The place is claimed when the file is about to be stored**, not checked and recorded
 afterwards. Checking first and recording later is a race, and not a theoretical one: eight
@@ -1234,13 +1236,35 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 558 tests
+npm test             # 562 tests, and 8 more with an S3 server (below)
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite
 ```
 
 Dev server options: `--port`, `--host`, `--root`, `--svg`, `--vite`.
+
+### Testing the S3 backend against a real server
+
+Every other S3 test hands the backend a fake `fetch` and reads what it was about to send.
+That proves the request is the one intended and cannot prove a server agrees — and request
+signing is exactly the kind of thing that looks right until something at the far end answers
+403. Eight tests therefore talk to a real server, and skip themselves when there is none:
+
+```bash
+docker run -d --name minio -p 9000:9000 \
+  -e MINIO_ROOT_USER=user -e MINIO_ROOT_PASSWORD=password123 \
+  quay.io/minio/minio server /data
+
+docker run --rm --network host --entrypoint /bin/sh quay.io/minio/mc \
+  -c "mc alias set local http://127.0.0.1:9000 user password123 && mc mb -p local/uploads"
+
+S3_ENDPOINT=http://127.0.0.1:9000 S3_BUCKET=uploads \
+  S3_KEY=user S3_SECRET=password123 npm test
+```
+
+Anything speaking the S3 API will do; CI runs them against MinIO on every push. Objects go
+under a prefix unique to the run, so runs do not tread on each other.
 
 ### What you can try in the demo
 
@@ -1321,8 +1345,10 @@ test/               tests
   a plain form submit.
 - HEIC and AVIF are identified and uploaded, but a browser that cannot decode them shows
   an empty tile; there is no server-side conversion.
-- Uploads are one request for the whole queue. There is no chunking, so a very large
-  queue on a poor connection is all-or-nothing.
+- A file is the smallest thing that can be sent again. `filesPerRequest` is 1, so a
+  connection that drops resumes at the file it stopped on rather than at the start of the
+  queue — but there is no chunking inside a file, so one very large file on a poor
+  connection is still all-or-nothing.
 - The widget uses container queries and `:has()` — a 2023 browser or newer.
 - Node 20+.
 

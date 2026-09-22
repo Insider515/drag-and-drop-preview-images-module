@@ -17,7 +17,8 @@ after(async () => { for (const fn of cleanups.reverse()) await fn(); });
 
 async function endpoint(options = {}) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'quota-')));
-  const server = http.createServer(createUploadHandler({ root, ...options }));
+  const handler = createUploadHandler({ root, ...options });
+  const server = http.createServer(handler);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -27,7 +28,12 @@ async function endpoint(options = {}) {
     await once(server, 'close');
     await fs.rm(root, { recursive: true, force: true });
   });
-  return { base, root, count: async () => (await fs.readdir(root)).filter((n) => !n.startsWith('.')).length };
+  return {
+    base,
+    root,
+    handler,
+    count: async () => (await fs.readdir(root)).filter((n) => !n.startsWith('.')).length,
+  };
 }
 
 /** One file in one request, the way the widget sends them. */
@@ -208,6 +214,57 @@ describe('quota: claiming a place, rather than checking for one', () => {
     assert.equal(accepted, 3, `${accepted} of eight got through a limit of three`);
     assert.equal(await count(), 3);
     assert.ok(statuses.includes(429), 'the rest were refused with something other than 429');
+  });
+
+  test('a batch the budget refused mid-read is told to wait, not told it is malformed', async () => {
+    // The refusal can be noticed twice: before the body is read, from the
+    // declared length, and again as each file claims its place. Both are the
+    // same refusal and have to read the same way to the widget. Measured
+    // before this: one request in sixty of eight sent at once came back 400,
+    // which says the request was malformed rather than that the budget is
+    // spent — and carried no Retry-After.
+    const { base, handler } = await endpoint({
+      limits: { perClient: { files: 1 } },
+      sessions: { identify: () => 'anna' },
+    });
+
+    const boundary = 'ddpquotaboundary';
+    const url = new URL(base);
+    const request = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      method: 'POST',
+      path: '/',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+    });
+    const answered = once(request, 'response');
+    request.flushHeaders();
+
+    // The headers are through, so the early check has already let this request
+    // in. The last place goes now — which is the window the race opened in.
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    handler.quota.take('session:anna', 0);
+
+    request.end(Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\n`
+        + 'Content-Disposition: form-data; name="images[]"; filename="a.png"\r\n'
+        + 'Content-Type: image/png\r\n\r\n',
+      ),
+      png(64),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]));
+
+    const [response] = await answered;
+    const body = JSON.parse(Buffer.concat(await response.toArray()).toString());
+
+    // Not the early refusal: this one got as far as reading the file, which is
+    // the path that used to answer 400.
+    assert.deepEqual(body.uploaded, [], 'this took the early path, not the one under test');
+    assert.equal(body.failures?.[0]?.code, 'QUOTA');
+
+    assert.equal(response.statusCode, 429);
+    assert.ok(response.headers['retry-after'], 'nothing said when to come back');
   });
 
   test('a file that fails gives its place back', async () => {
