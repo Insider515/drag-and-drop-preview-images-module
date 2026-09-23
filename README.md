@@ -117,6 +117,30 @@ app.use('/api/upload', createUploadHandler({ root: './uploads' }));
 app.listen(3000);
 ```
 
+The server half needs one more package:
+
+```bash
+npm install busboy
+```
+
+### Against a backend of your own
+
+The widget does not need this package's server, and most pages that use it will not have
+one: the backend is often PHP, Python, Go, or an endpoint that already exists. Point
+`endpoint` at it and nothing else changes — **busboy is not needed at all in this case**,
+which is why it is not installed with the package.
+
+What your endpoint has to do is small:
+
+| | |
+|---|---|
+| **Accept** | a `POST` of `multipart/form-data`, files under the field `images[]` — rename it with the widget's `name` option |
+| **On success** | any 2xx. Every file in that request is then shown as sent |
+| **On refusal** | a non-2xx, optionally with JSON: `{ "code": "TOO_LARGE", "error": "…" }` for the request, or `{ "failures": [{ "name": "a.png", "code": "TOO_LARGE", "error": "…" }] }` to mark single files and keep the rest |
+
+`filesPerRequest` is 1 by default, so each file arrives in its own request and a dropped
+connection resumes at the file it stopped on rather than at the start of the queue.
+
 ---
 
 ## What it does
@@ -436,6 +460,14 @@ A theme applies to one widget, so two on a page can look different.
 `createUploadHandler()` returns a plain `(req, res)` function over node's own objects.
 `basePath` is the prefix to strip when the host does not rewrite `req.url` itself —
 Express does, Adonis and `node:http` do not.
+
+**It needs busboy**, which `npm install busboy` brings. The package declares it as an
+optional peer dependency rather than an ordinary one, so that a page using the widget with
+some other backend does not install a Node parser it will never load. Importing `/server`
+still needs nothing, and neither does `UploadService` on its own; it is
+`createUploadHandler()` that asks for it, and it refuses to be built without it, naming
+that command. The refusal happens at startup on purpose: before it existed, a missing
+busboy let the app start, look healthy, and answer the first real upload with a plain 500.
 
 ```js
 // Express
@@ -1275,7 +1307,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 574 tests, and 10 more with an S3 server (below)
+npm test             # 580 tests, and 10 more with an S3 server (below)
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

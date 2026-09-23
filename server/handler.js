@@ -1,25 +1,9 @@
-import { createRequire } from 'node:module';
-
 import { UploadError } from './errors.js';
 import { createRouter } from './http.js';
 import { DEFAULT_LIMITS, UploadService } from './upload-service.js';
 import { assertValidName } from './safe-name.js';
 import { clientKey, createQuota, normaliseQuota } from './quota.js';
-
-const require = createRequire(import.meta.url);
-
-/**
- * Multipart parsing is busboy's job, and it is the only runtime dependency.
- *
- * It is required lazily so that importing this module for `UploadService`
- * alone — to do the storing from a framework that parses the body itself —
- * works in a project that never installed it.
- */
-let busboyModule = null;
-function loadBusboy() {
-  if (!busboyModule) busboyModule = require('busboy');
-  return busboyModule;
-}
+import { loadBusboy } from './busboy.js';
 
 function selfOrigin(req) {
   const host = req.get('host');
@@ -122,6 +106,13 @@ function normaliseSessions(raw) {
 }
 
 export function createUploadHandler(options = {}) {
+  // Resolved here rather than at the first upload. Importing this module still
+  // needs nothing — `UploadService` on its own is for a framework that parses
+  // the body itself — but a handler that cannot parse a body is not a handler,
+  // and finding that out from the first person who tries to upload something
+  // is finding it out from the worst possible place.
+  loadBusboy();
+
   const service = new UploadService(options);
   const limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
   // The same default the widget posts under. They were different, and the

@@ -91,10 +91,16 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm test && npm run typecheck"
   },
-  "dependencies": {
+  "peerDependencies": {
     "busboy": "^1.6.0"
   },
+  "peerDependenciesMeta": {
+    "busboy": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "busboy": "^1.6.0",
     "@types/node": "^22.20.1",
     "express": "^4.21.2",
     "typescript": "^5.9.3",

@@ -49,6 +49,19 @@ Everything below has landed on `master` and is not yet published to npm.
 
 ### Changed
 
+- **The multipart parser is no longer installed with the package.** `busboy` is an
+  optional peer dependency now, so a page that uses the widget against a backend written
+  in something else — the common case for a browser widget — stops installing a Node
+  parser it never loads. `npm install busboy` alongside the package is what the server
+  half needs, and the README says so where the server is introduced.
+- `createUploadHandler()` asks for busboy when it is built rather than at the first
+  upload, and says what to install when it is missing. Measured before this: the app
+  started, looked healthy, and answered the first real upload with a plain
+  `500 {"error":"Internal server error"}`, with `Cannot find module 'busboy'` reaching
+  the host only through `onWarning` and only after somebody's upload had already failed.
+  Importing `/server` still needs nothing, and neither does `UploadService` on its own.
+
+
 - **Node 20 is the floor**, where the package claimed 18. The library itself needs nothing
   newer, but the tests do — `File` and `zlib.crc32` both arrived after 18 — so the Node 18
   job in CI had been red since the day the workflow landed, and the suite had in truth never

@@ -82,9 +82,22 @@ describe('the server entry', () => {
     assert.deepEqual(missing, [], `exports point at files that are not there: ${missing.join(', ')}`);
   });
 
-  test('the only runtime dependency is the multipart parser', () => {
-    // A widget people drop into a page should not drag a tree in behind it.
-    assert.deepEqual(Object.keys(pkg.dependencies ?? {}), ['busboy']);
+  test('installing it brings nothing else with it', () => {
+    // A widget people drop into a page should not drag a tree in behind it —
+    // and most of what this package does happens in a browser, so even the one
+    // server-side parser is not installed for everybody.
+    assert.deepEqual(Object.keys(pkg.dependencies ?? {}), []);
+  });
+
+  test('the multipart parser is an optional peer, not a dependency', () => {
+    // Optional, or npm installs it anyway and the front-end-only case is back
+    // to paying for a server it never runs.
+    assert.deepEqual(Object.keys(pkg.peerDependencies ?? {}), ['busboy']);
+    assert.equal(pkg.peerDependenciesMeta?.busboy?.optional, true);
+  });
+
+  test('it is a dev dependency, so the server half is tested here', () => {
+    assert.ok(pkg.devDependencies?.busboy, 'the server tests would have nothing to parse with');
   });
 });
 
