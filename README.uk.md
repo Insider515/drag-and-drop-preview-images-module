@@ -1,4 +1,4 @@
-# drag-and-drop-preview-images-module
+# image-drop-upload
 
 Зона перетягування зображень із попереднім переглядом: фронтенд-віджет без залежностей
 і серверний обробник завантаження без фреймворка.
@@ -49,20 +49,25 @@ Fastify, Nest або голий `node:http`, і має єдину залежні
 
 > 🇬🇧 [This page in English](README.md) — головна версія документації.
 
-![Віджет на сторінці демо: угорі перемикачі мови, теми, стиснення й розміру, під ними зона перетягування, далі шість мініатюр із розмірами, а внизу — історія завантажень самої сторінки](docs/screenshot.png)
+![Віджет на сторінці демо: угорі перемикачі мови, теми, стиснення й розміру, під ними зона перетягування, далі шість мініатюр із розмірами, а внизу — історія завантажень самої сторінки](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/docs/screenshot.png)
 
 ---
 
-## Стан
-
-У роботі, на npm поки не опубліковано. Доки цього не сталося, встановлюйте
-з репозиторію:
+## Встановлення
 
 ```bash
-npm install github:Insider515/drag-and-drop-preview-images-module
+npm install image-drop-upload
 ```
 
-Або склонуйте й запустіть демо:
+Для сторінки це все: у віджета немає залежностей, і нічого серверного разом із ним
+не ставиться. busboy потрібен лише тоді, коли ви берете й Node-обробник, що йде в
+комплекті:
+
+```bash
+npm install busboy
+```
+
+Або склонуйте репозиторій і запустіть демо:
 
 ```bash
 git clone https://github.com/Insider515/drag-and-drop-preview-images-module.git
@@ -89,8 +94,8 @@ npm start          # збирає демо й піднімає його на htt
 ```
 
 ```js
-import { DropPreview } from 'drag-and-drop-preview-images-module';
-import 'drag-and-drop-preview-images-module/style.css';
+import { DropPreview } from 'image-drop-upload';
+import 'image-drop-upload/style.css';
 
 new DropPreview('#images', { name: 'images[]' });
 ```
@@ -109,7 +114,7 @@ drop.on('uploaded', ({ answer }) => console.log(answer.uploaded));
 ```js
 // server
 import express from 'express';
-import { createUploadHandler } from 'drag-and-drop-preview-images-module/server';
+import { createUploadHandler } from 'image-drop-upload/server';
 
 const app = express();
 app.use('/api/upload', createUploadHandler({ root: './uploads' }));
@@ -388,7 +393,7 @@ new DropPreview('#images', { locale: 'de' });
 Неповний словник — нормально: усе, чого в ньому немає, береться з англійської.
 
 ```js
-import { DropPreview, PLURAL_RULES } from 'drag-and-drop-preview-images-module';
+import { DropPreview, PLURAL_RULES } from 'image-drop-upload';
 
 new DropPreview('#images', {
   locale: {
@@ -531,7 +536,7 @@ createUploadHandler({
 фреймворка, який розбирає multipart сам:
 
 ```js
-import { UploadService } from 'drag-and-drop-preview-images-module/server';
+import { UploadService } from 'image-drop-upload/server';
 
 const service = new UploadService({ root: './uploads' });
 const stored = await service.store(filename, readableStream);
@@ -1125,7 +1130,7 @@ TCP, і відправник мусить чекати — це доходить
 Для чогось іншого — S3 або контейнер, чий диск зникає разом із ним, — передайте backend:
 
 ```js
-import { createUploadHandler, createS3Storage } from 'drag-and-drop-preview-images-module/server';
+import { createUploadHandler, createS3Storage } from 'image-drop-upload/server';
 
 createUploadHandler({
   root: './uploads',            // усе одно потрібна: див. нижче
@@ -1299,7 +1304,7 @@ TIFF тримає каталог після пікселів, а JPEG із ве�
 ```bash
 npm install
 npm run dev          # API + Vite з гарячим перезавантаженням -> http://localhost:5173
-npm test             # 580 тестів, і ще 10 зі справжнім S3-сервером (нижче)
+npm test             # 584 тести, і ще 10 зі справжнім S3-сервером (нижче)
 npm run build        # бібліотека -> dist/
 npm run build:demo   # демо-сторінка -> demo-dist/
 npm start            # зібрати демо і віддати без Vite

@@ -1,5 +1,5 @@
 /**
- * Type definitions for `drag-and-drop-preview-images-module/server`.
+ * Type definitions for `image-drop-upload/server`.
  *
  * The handler is described in terms of node's own request and response, not a
  * framework's: it mounts in Express, AdonisJS, Fastify, Nest or bare

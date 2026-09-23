@@ -1,5 +1,5 @@
 /**
- * Type definitions for `drag-and-drop-preview-images-module`.
+ * Type definitions for `image-drop-upload`.
  *
  * Hand-written rather than generated: the options are the API, and they
  * deserve prose a generator cannot produce.

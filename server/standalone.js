@@ -130,7 +130,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`drag-and-drop-preview-images-module: http://${host}:${port}`);
+  console.log(`image-drop-upload: http://${host}:${port}`);
   console.log(`  uploads   : ${root}`);
   console.log(`  mode      : ${vite ? 'vite (hot reload)' : 'static demo-dist/'}`);
   if (host !== '127.0.0.1' && host !== 'localhost') {

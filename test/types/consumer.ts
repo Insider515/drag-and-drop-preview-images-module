@@ -17,7 +17,7 @@ import {
   type LocaleDictionary,
   type QueuedFile,
   type Theme,
-} from 'drag-and-drop-preview-images-module';
+} from 'image-drop-upload';
 
 import {
   UploadService,
@@ -26,7 +26,7 @@ import {
   type UploadHandler,
   type UploadResult,
   type UploadStorage,
-} from 'drag-and-drop-preview-images-module/server';
+} from 'image-drop-upload/server';
 
 // --------------------------------------------------------------- the widget
 const plain = new DropPreview('#host');

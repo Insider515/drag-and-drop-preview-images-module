@@ -16,10 +16,10 @@
       "node"
     ],
     "paths": {
-      "drag-and-drop-preview-images-module": [
+      "image-drop-upload": [
         "./types/index.d.ts"
       ],
-      "drag-and-drop-preview-images-module/server": [
+      "image-drop-upload/server": [
         "./types/server.d.ts"
       ]
     },

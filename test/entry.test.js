@@ -101,6 +101,53 @@ describe('the server entry', () => {
   });
 });
 
+describe('the name and the version, as the outside world sees them', () => {
+  const readmes = ['README.md', 'README.uk.md'];
+  const read = (name) => fs.readFileSync(path.join(here, '..', name), 'utf8');
+
+  test('both READMEs tell people to install the name the package actually has', () => {
+    // A rename is a dozen files, and the one that matters most is the line
+    // somebody copies. Getting it wrong sends them to a package that is not
+    // there, or — worse, once a name is free — to somebody else's.
+    for (const name of readmes) {
+      assert.match(read(name), new RegExp(`npm install ${pkg.name}(\\s|$)`, 'm'),
+        `${name} does not tell anyone to install ${pkg.name}`);
+    }
+  });
+
+  test('every import example uses that same name', () => {
+    // The sub-path exports are the giveaway: `/server` and `/style.css` can
+    // only belong to this package, so whatever precedes them must be its name.
+    for (const name of readmes) {
+      const specifiers = [...read(name).matchAll(/from '([^']+)'/g)].map((match) => match[1]);
+      const ours = specifiers.filter((id) => id.endsWith('/server') || id.endsWith('/style.css'));
+      assert.ok(ours.length, `${name} has no import examples to check`);
+      const wrong = ours.filter((id) => !id.startsWith(`${pkg.name}/`));
+      assert.deepEqual(wrong, [], `${name} still imports from: ${wrong.join(', ')}`);
+    }
+  });
+
+  test('the type-checking paths point at the same name', () => {
+    // These are what let the consumer file under test/types resolve the
+    // package by name rather than by a relative path; a rename that misses
+    // them turns that check into one that silently tests nothing.
+    const tsconfig = fs.readFileSync(path.join(here, '..', 'tsconfig.json'), 'utf8');
+    for (const key of [pkg.name, `${pkg.name}/server`]) {
+      assert.ok(tsconfig.includes(`"${key}"`), `tsconfig.json has no path for ${key}`);
+    }
+  });
+
+  test('the changelog names this version at the top', () => {
+    // A release whose notes still say "Unreleased" is a release nobody can
+    // read, and one that names a different number is worse than none.
+    const changelog = fs.readFileSync(path.join(here, '..', 'CHANGELOG.md'), 'utf8');
+    const first = changelog.split('\n').find((line) => line.startsWith('## '));
+    assert.ok(first, 'the changelog has no versions in it at all');
+    assert.match(first, new RegExp(`^## ${pkg.version.replace(/\./g, '\\.')}( |$)`),
+      `the changelog opens with "${first}" while the package says ${pkg.version}`);
+  });
+});
+
 describe('the size the README promises', { skip: hasBuild ? false : 'dist/ is not built yet' }, () => {
   const gzipped = (file) =>
     zlib.gzipSync(fs.readFileSync(path.join(here, '..', file)), { level: 9 }).length;

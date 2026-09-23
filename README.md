@@ -1,4 +1,4 @@
-# drag-and-drop-preview-images-module
+# image-drop-upload
 
 An image drop zone with previews: a front-end widget with no dependencies and a Node
 upload handler with no framework.
@@ -50,20 +50,25 @@ integration time.
 
 > 🇺🇦 [Ця сторінка українською](README.uk.md)
 
-![The widget in the demo page: language, theme, compression and resize controls above a drop zone, six thumbnails with their sizes below it, and the page's own upload history at the bottom](docs/screenshot.png)
+![The widget in the demo page: language, theme, compression and resize controls above a drop zone, six thumbnails with their sizes below it, and the page's own upload history at the bottom](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/docs/screenshot.png)
 
 ---
 
-## Status
-
-Work in progress, and not published to npm yet. Until it is, install it from the
-repository:
+## Install
 
 ```bash
-npm install github:Insider515/drag-and-drop-preview-images-module
+npm install image-drop-upload
 ```
 
-Or clone it and try the demo:
+That is the whole of it for a page: the widget has no dependencies, and nothing
+server-side is installed with it. Add busboy only if you also use the Node handler
+that comes in the box:
+
+```bash
+npm install busboy
+```
+
+Or clone the repository and try the demo:
 
 ```bash
 git clone https://github.com/Insider515/drag-and-drop-preview-images-module.git
@@ -90,8 +95,8 @@ difference.
 ```
 
 ```js
-import { DropPreview } from 'drag-and-drop-preview-images-module';
-import 'drag-and-drop-preview-images-module/style.css';
+import { DropPreview } from 'image-drop-upload';
+import 'image-drop-upload/style.css';
 
 new DropPreview('#images', { name: 'images[]' });
 ```
@@ -110,7 +115,7 @@ drop.on('uploaded', ({ answer }) => console.log(answer.uploaded));
 ```js
 // server
 import express from 'express';
-import { createUploadHandler } from 'drag-and-drop-preview-images-module/server';
+import { createUploadHandler } from 'image-drop-upload/server';
 
 const app = express();
 app.use('/api/upload', createUploadHandler({ root: './uploads' }));
@@ -389,7 +394,7 @@ attribute.
 Partial dictionaries are fine: anything left out comes from English.
 
 ```js
-import { DropPreview, PLURAL_RULES } from 'drag-and-drop-preview-images-module';
+import { DropPreview, PLURAL_RULES } from 'image-drop-upload';
 
 new DropPreview('#images', {
   locale: {
@@ -533,7 +538,7 @@ why, and keeps the rest.
 that parses the multipart body itself:
 
 ```js
-import { UploadService } from 'drag-and-drop-preview-images-module/server';
+import { UploadService } from 'image-drop-upload/server';
 
 const service = new UploadService({ root: './uploads' });
 const stored = await service.store(filename, readableStream);
@@ -1132,7 +1137,7 @@ this one did, and it is what most deployments want.
 For anything else — S3, or a container whose disk vanishes with it — pass a backend:
 
 ```js
-import { createUploadHandler, createS3Storage } from 'drag-and-drop-preview-images-module/server';
+import { createUploadHandler, createS3Storage } from 'image-drop-upload/server';
 
 createUploadHandler({
   root: './uploads',            // still needed: see below
@@ -1307,7 +1312,7 @@ is rendered as that text and nothing else.
 ```bash
 npm install
 npm run dev          # API + Vite with hot reload -> http://localhost:5173
-npm test             # 580 tests, and 10 more with an S3 server (below)
+npm test             # 584 tests, and 10 more with an S3 server (below)
 npm run build        # library -> dist/
 npm run build:demo   # demo page -> demo-dist/
 npm start            # build the demo and serve it without Vite

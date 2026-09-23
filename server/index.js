@@ -1,5 +1,5 @@
 /**
- * Server entry point for `drag-and-drop-preview-images-module/server`.
+ * Server entry point for `image-drop-upload/server`.
  *
  * One handler, no framework. `createUploadHandler` returns a plain
  * `(req, res)` function over node's own request and response, so it mounts

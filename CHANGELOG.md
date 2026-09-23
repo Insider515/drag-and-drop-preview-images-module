@@ -5,9 +5,18 @@ Notable changes, newest first. Dates are the day the work landed on `master`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 3.0.0 — 2026-09-23
 
-Everything below has landed on `master` and is not yet published to npm.
+The first release published to npm, and the reason for the major number: two of the changes
+below break a project upgrading from 2.0.0 by hand.
+
+### Changed — breaking
+
+- **The package is called `image-drop-upload`.** `drag-and-drop-preview-images-module` said
+  what it was and nothing about what it is for, and the word "module" carried no meaning at
+  all. The repository keeps its name; only the package and the import specifiers change.
+- **Node 20 or newer.** See below.
+- **busboy is no longer installed with the package.** See below.
 
 ### Added
 

@@ -1,8 +1,8 @@
 /**
- * drag-and-drop-preview-images-module — an image drop zone with previews.
+ * image-drop-upload — an image drop zone with previews.
  *
- *   import { DropPreview } from 'drag-and-drop-preview-images-module';
- *   import 'drag-and-drop-preview-images-module/style.css';
+ *   import { DropPreview } from 'image-drop-upload';
+ *   import 'image-drop-upload/style.css';
  *
  *   new DropPreview('#host', { endpoint: '/api/upload' });
  *

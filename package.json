@@ -1,6 +1,6 @@
 {
-  "name": "drag-and-drop-preview-images-module",
-  "version": "2.0.0",
+  "name": "image-drop-upload",
+  "version": "3.0.0",
   "type": "module",
   "description": "Embeddable image drop zone: a dependency-free widget with previews and a framework-free Node upload handler",
   "keywords": [
