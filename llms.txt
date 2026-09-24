@@ -1,0 +1,205 @@
+# image-drop-upload
+
+> An embeddable image drop zone: a dependency-free browser widget with previews, and a
+> framework-free Node upload handler. The widget shows each picked file as a thumbnail
+> with its size and a remove button, identifies files by their leading bytes rather than
+> their extension, and either rides along with an ordinary form or uploads on its own with
+> progress and cancellation. Published on npm as `image-drop-upload` (v3, MIT, Node >= 20).
+
+**The two halves are independent.** `image-drop-upload` is a plain JS class that mounts
+into any DOM element — no framework, no jQuery, no icon font, zero runtime dependencies,
+16 KB JS + 2 KB CSS gzipped. `image-drop-upload/server` is a single `(req, res)` function
+that mounts in Express, AdonisJS, Fastify, Nest or bare `node:http`; its only dependency is
+busboy, declared as an optional peer so pages using the widget against a PHP/Python/Go
+backend never install it. Either half works without the other.
+
+**Install**
+
+```bash
+npm install image-drop-upload      # the widget
+npm install busboy                 # only if you also use the Node handler
+```
+
+**As a plain form field — no server changes at all.** Leave `endpoint` unset and the files
+ride along with the form; the existing backend sees an ordinary `multipart/form-data` post.
+
+```js
+import { DropPreview } from 'image-drop-upload';
+import 'image-drop-upload/style.css';
+
+new DropPreview('#images', { name: 'images[]' });
+```
+
+**Uploading on its own**
+
+```js
+const drop = new DropPreview('#images', { endpoint: '/api/upload', autoUpload: true });
+drop.on('uploaded', ({ answer }) => console.log(answer.uploaded));
+```
+
+```js
+import express from 'express';
+import { createUploadHandler } from 'image-drop-upload/server';
+
+const app = express();
+app.use('/api/upload', createUploadHandler({ root: './uploads' }));
+app.listen(3000);
+```
+
+**Against a backend of your own.** Point `endpoint` at any URL that accepts a `POST` of
+`multipart/form-data` with files under the field `images[]` (renameable via `name`). Any
+2xx marks the request's files sent; a non-2xx may carry
+`{ "code": "TOO_LARGE", "error": "…" }` for the whole request, or
+`{ "failures": [{ "name": "a.png", "code": "TOO_LARGE", "error": "…" }] }` to mark single
+files and keep the rest. `filesPerRequest` is 1 by default, so a dropped connection resumes
+at the file it stopped on.
+
+**Widget options** (`new DropPreview(target, options)`; `target` is an element or selector)
+
+```js
+{
+  endpoint: null,         // POST here; null keeps it a plain form field
+  name: 'images[]',       // form field name
+  fields: null,           // extra form fields sent with an upload
+  headers: null,          // object or function — for authorisation tokens
+  credentials: 'same-origin',
+
+  accept: [],             // MIME types; empty means every image format known
+  allowSvg: false,        // SVG is XML that can carry script; opt-in
+  limits: null,           // { maxFileSize, maxFiles, maxTotalSize, maxPixels }
+  compress: null,         // shrink pictures in the browser before sending
+  retry: null,            // send a failed upload again
+  filesPerRequest: 1,     // files in one request; 0 sends the whole queue at once
+
+  autoUpload: false,
+  showUploadButton: true,
+  showClearButton: true,
+
+  reorder: true,          // drag a tile, or Alt+arrow on a focused one
+  paste: true,            // Ctrl+V; 'document' listens on the whole page
+  camera: 'auto',         // a "Take a photo" button where the pointer is coarse
+  capture: 'environment',
+
+  locale: null,           // 'en' | 'uk' | 'es' | 'de' | 'fr' | your dictionary
+  theme: null,            // colours, fonts, metrics
+  colorScheme: 'auto',    // 'auto' | 'light' | 'dark'
+}
+```
+
+`limits` defaults: `maxFileSize` 10 MB, `maxFiles` 20, `maxTotalSize` 100 MB, `maxPixels`
+50 M. `maxPixels` guards against decompression bombs: a 30 KB PNG declaring 40000x40000
+costs gigabytes to decode, so the check runs when the preview is built.
+
+**Methods, properties and events**
+
+```js
+await drop.add(fileList);   drop.remove(id);   drop.clear();
+await drop.upload();        drop.cancel();     drop.destroy();
+drop.files;                 drop.totalBytes;   drop.busy;
+drop.describeError(code, detail);              // code -> text in the active language
+
+drop.on('change',   ({ files }) => {});
+drop.on('rejected', ({ rejected }) => {});     // [{ file, code, detail }]
+drop.on('uploaded', ({ answer, files }) => {});
+drop.on('error',    ({ error, code, message }) => {});
+```
+
+`on()` returns a function that unsubscribes. Refusals carry a `code`, never a sentence, so
+code can branch on them.
+
+**Handler options** (`createUploadHandler(options)` from `image-drop-upload/server`)
+
+```js
+{
+  root: './uploads',         // required; the one directory files may land in
+  basePath: '',              // prefix to strip when the host does not rewrite req.url
+  field: 'images[]',
+  accept: [],  allowSvg: false,
+  onConflict: 'rename',      // 'rename' | 'refuse' | 'overwrite'
+  rename: null,              // (name, { type }) => string
+  limits: {
+    maxFileSize: 10 * 1024 * 1024,
+    maxFiles: 20,                      // per request; see perClient for per-person
+    maxRequestSize: 100 * 1024 * 1024,
+    maxPixels: 50 * 1024 * 1024,
+    maxBytesPerSecond: 0,              // server-side rate limit; 0 is no limit
+    perClient: null,                   // quota across requests
+    minFreeSpace: 64 * 1024 * 1024,
+  },
+  maxConcurrent: 8,          // uploads in flight; beyond that, 503
+  allowedOrigins: undefined, // same-origin only by default; false disables the check
+  authorize: (req, ctx) => true,
+  onWarning: (message, detail) => {},
+  sessions: null,            // { identify(req), scope, … } — a folder per visitor
+  scan: null,                // { service: 'virustotal', apiKey } or your own check()
+  storage: null,             // createS3Storage({ bucket, region, … }); local disk otherwise
+}
+```
+
+The answer is `{ uploaded: [{ name, original, size, type }], failures: [{ name, code,
+error, params }], fields: {} }` — one bad file does not fail the batch. `UploadService`
+from the same entry point does the filesystem work alone, for a framework that parses
+multipart itself.
+
+**Error codes.** Client and server share a vocabulary: `NOT_AN_IMAGE`, `SVG_REFUSED`,
+`TYPE_NOT_ALLOWED`, `TOO_LARGE`, `TOTAL_TOO_LARGE`, `TOO_MANY`, `EMPTY`, `DUPLICATE`,
+`QUOTA`, `BUSY`, `DENIED`, `ABORTED`, `NETWORK`, `HTTP_ERROR`, `CROSS_ORIGIN`,
+`NOT_MULTIPART`, `NO_FILES`, `INVALID_BODY`, `NO_SESSION`, `INVALID_SESSION`, `INTERNAL`.
+
+**Optional feature blocks.** Each is one option; leave it out and that code never runs.
+*Compression* (`compress: { maxWidth, maxHeight, fit, quality, format, stripMetadata,
+skipIfLarger }`) resizes and re-encodes on the page via canvas — `quality: 'auto'` is 0.85,
+`'lossless'` strips metadata only, and a picture already inside the box is left alone.
+*Retry* (`retry: { attempts: 3, delay: 1000, backoff: 2, maxDelay: 30000 }`) repeats
+connection failures, never refusals, with Cancel cutting the wait short. *Sessions*
+(`sessions: { identify(req) }`) gives each visitor a subdirectory and reports an `owner`.
+*Malware screening* (`scan`) sends a SHA-256 to VirusTotal or your own scanner — the file
+never leaves the server; `onUnknown` defaults to `accept`, `onError` to `reject`.
+*S3* (`createS3Storage`) signs requests with SigV4 from `node:crypto`, no SDK.
+
+**Security posture.** Type is sniffed from leading bytes on both sides, the client's check
+only to give the user a reason. Unsafe names are refused rather than repaired (traversal in
+any spelling, NUL bytes, Windows device names, trailing dots). Uploads land under a
+temporary name and are renamed only when whole; a dead request is cleaned up. Cross-origin
+`multipart/form-data` posts are rejected by default, since they are not preflighted.
+
+**Languages and themes.** English (default), Ukrainian, Spanish, German, French, or your
+own dictionary object; plurals follow each language's rule and sizes are localised. Light
+and dark themes follow the system or can be forced; every colour, font and metric is a CSS
+variable settable through `theme`.
+
+**Limitations.** Images only (ten formats identified). Previews are `background-image`, so
+animation plays as the browser sees fit. Compression re-encodes via canvas — no lossless
+JPEG recompression. Dimensions are read from the header, not measured. The queue is held in
+a hidden input through `DataTransfer`, which has no fallback. HEIC/AVIF upload but show an
+empty tile where the browser cannot decode them. No chunking inside a single file. Needs a
+2023-or-newer browser (container queries, `:has()`) and Node 20+.
+
+## Documentation
+
+- [README](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/README.md): the complete manual — every option, event and failure mode, with the reasoning behind the defaults
+- [README (Ukrainian)](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/README.uk.md): the same text in Ukrainian
+- [CHANGELOG](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/CHANGELOG.md): what changed in each release, including the 3.0 breaking changes
+- [LICENSE](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/LICENSE): MIT
+
+## API reference
+
+- [types/index.d.ts](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/types/index.d.ts): the widget's full typed surface — options, events, exported helpers
+- [types/server.d.ts](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/types/server.d.ts): handler options, `UploadService`, storage backends, quotas, scanning
+- [src/index.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/src/index.js): every client export, annotated
+- [server/index.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/server/index.js): every server export, annotated
+- [package.json](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/package.json): entry points, exports map, peer dependencies
+
+## Examples
+
+- [demo/main.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/demo/main.js): a working page exercising language, theme, compression and resize controls
+- [demo/index.html](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/demo/index.html): the markup it mounts into
+- [server/standalone.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/server/standalone.js): the demo server, and a minimal `node:http` mount
+
+## Optional
+
+- [npm package](https://www.npmjs.com/package/image-drop-upload): published releases
+- [GitHub repository](https://github.com/Insider515/drag-and-drop-preview-images-module): issues and source
+- [src/core/validate.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/src/core/validate.js): the client-side checks and their refusal codes
+- [server/handler.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/server/handler.js): the request path end to end, guards included
+- [server/safe-name.js](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/server/safe-name.js): the name rules, which refuse rather than repair
