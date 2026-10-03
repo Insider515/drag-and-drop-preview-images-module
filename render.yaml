@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: image-drop-upload-demo
+    runtime: node
+    plan: free
+    branch: master
+    # vite and busboy live in devDependencies, which Render skips by default
+    buildCommand: npm install --include=dev && npm run build:demo
+    # The server takes its port, host and upload directory from flags, not from
+    # the environment. The free plan's /tmp is wiped whenever the instance
+    # restarts, so whatever visitors drop on the demo clears itself.
+    startCommand: node server/standalone.js --host 0.0.0.0 --port $PORT --root /tmp/uploads
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
