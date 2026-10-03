@@ -52,6 +52,11 @@ integration time.
 
 ![The widget in the demo page: language, theme, compression and resize controls above a drop zone, six thumbnails with their sizes below it, and the page's own upload history at the bottom](https://raw.githubusercontent.com/Insider515/drag-and-drop-preview-images-module/master/docs/screenshot.png)
 
+**[Live demo](https://image-drop-upload-demo.onrender.com/)** — the page in that
+screenshot, with the language, theme, compression and malware-check switches live.
+It runs on a free instance that sleeps when nobody is using it, so the first request
+may take up to a minute; whatever you drop on it is wiped when the instance restarts.
+
 ---
 
 ## Install
